@@ -8,17 +8,20 @@ ANDROID_DIR="$ROOT_DIR/android-app"
 MACOS_PROJECT="$ROOT_DIR/macos-app/Webcamera/Webcamera.xcodeproj"
 
 RELEASE_DIR="$ROOT_DIR/release"
-DERIVED_DATA_DIR="$ROOT_DIR/.release-derived-data"
+DERIVED_DATA_DIR="$ROOT_DIR/macos-app/ReleaseDerivedData"
 
 APP_NAME="Webcamera"
-MACOS_SCHEME="Webcamera"
+SCHEME_NAME="Webcamera"
 
 VERSION="${1:-1.0.0}"
 
-ANDROID_OUTPUT="$RELEASE_DIR/Webcamera-Android-$VERSION.apk"
-MACOS_OUTPUT="$RELEASE_DIR/Webcamera-macOS-$VERSION.zip"
+ANDROID_APK_SOURCE="$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk"
+ANDROID_APK_OUTPUT="$RELEASE_DIR/Webcamera-Android-$VERSION.apk"
 
-echo "Building Webcamera $VERSION"
+MACOS_APP="$DERIVED_DATA_DIR/Build/Products/Release/$APP_NAME.app"
+MACOS_ZIP="$RELEASE_DIR/Webcamera-macOS-$VERSION.zip"
+
+echo "Building Webcamera release $VERSION"
 echo
 
 rm -rf "$RELEASE_DIR"
@@ -26,48 +29,48 @@ rm -rf "$DERIVED_DATA_DIR"
 
 mkdir -p "$RELEASE_DIR"
 
-echo "Building Android application..."
+if [ -f "$ANDROID_DIR/gradlew" ]; then
+    echo "Building Android application..."
 
-cd "$ANDROID_DIR"
+    cd "$ANDROID_DIR"
 
-./gradlew clean assembleDebug
+    ./gradlew clean assembleDebug
 
-ANDROID_APK="$ANDROID_DIR/app/build/outputs/apk/debug/app-debug.apk"
+    if [ ! -f "$ANDROID_APK_SOURCE" ]; then
+        echo "Error: Android APK was not created:"
+        echo "$ANDROID_APK_SOURCE"
+        exit 1
+    fi
 
-if [ ! -f "$ANDROID_APK" ]; then
-    echo "Android APK was not created:"
-    echo "$ANDROID_APK"
-    exit 1
+    cp "$ANDROID_APK_SOURCE" "$ANDROID_APK_OUTPUT"
+
+    echo "Android artifact created:"
+    echo "$ANDROID_APK_OUTPUT"
+    echo
+else
+    echo "Android Gradle project is not ready yet."
+    echo "Skipping Android build."
+    echo
 fi
 
-cp "$ANDROID_APK" "$ANDROID_OUTPUT"
-
-echo "Android artifact:"
-echo "$ANDROID_OUTPUT"
-echo
-
 if [ ! -d "$MACOS_PROJECT" ]; then
-    echo "macOS Xcode project has not been created yet:"
+    echo "Error: macOS Xcode project was not found:"
     echo "$MACOS_PROJECT"
-    echo
-    echo "Android artifact was created successfully."
-    exit 0
+    exit 1
 fi
 
 echo "Building macOS application..."
 
 xcodebuild \
     -project "$MACOS_PROJECT" \
-    -scheme "$MACOS_SCHEME" \
+    -scheme "$SCHEME_NAME" \
     -configuration Release \
     -derivedDataPath "$DERIVED_DATA_DIR" \
     CODE_SIGNING_ALLOWED=NO \
     clean build
 
-MACOS_APP="$DERIVED_DATA_DIR/Build/Products/Release/$APP_NAME.app"
-
 if [ ! -d "$MACOS_APP" ]; then
-    echo "macOS application bundle was not created:"
+    echo "Error: macOS application was not created:"
     echo "$MACOS_APP"
     exit 1
 fi
@@ -79,6 +82,8 @@ codesign \
     --deep \
     --sign - \
     "$MACOS_APP"
+
+echo "Verifying signature..."
 
 codesign \
     --verify \
@@ -94,12 +99,12 @@ ditto \
     --sequesterRsrc \
     --keepParent \
     "$MACOS_APP" \
-    "$MACOS_OUTPUT"
+    "$MACOS_ZIP"
 
 rm -rf "$DERIVED_DATA_DIR"
 
 echo
-echo "Release artifacts:"
+echo "Release files:"
 echo
 
 find "$RELEASE_DIR" \
@@ -108,4 +113,4 @@ find "$RELEASE_DIR" \
     -print
 
 echo
-echo "Build complete."
+echo "Release build completed."

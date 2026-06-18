@@ -20,7 +20,18 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
+      - name: Check Android project
+        id: android-project
+        shell: bash
+        run: |
+          if [ -f "android-app/gradlew" ] && [ -f "android-app/app/build.gradle" ]; then
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Set up Java
+        if: steps.android-project.outputs.exists == 'true'
         uses: actions/setup-java@v4
         with:
           distribution: temurin
@@ -28,18 +39,25 @@ jobs:
           cache: gradle
 
       - name: Make Gradle wrapper executable
+        if: steps.android-project.outputs.exists == 'true'
         run: chmod +x android-app/gradlew
 
       - name: Build Android APK
+        if: steps.android-project.outputs.exists == 'true'
         working-directory: android-app
         run: ./gradlew clean assembleDebug
 
       - name: Upload Android APK
+        if: steps.android-project.outputs.exists == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Webcamera-Android
           path: android-app/app/build/outputs/apk/debug/app-debug.apk
           if-no-files-found: error
+
+      - name: Skip Android build
+        if: steps.android-project.outputs.exists != 'true'
+        run: echo "Android project is not ready yet."
 
   macos:
     name: Build macOS
@@ -49,18 +67,10 @@ jobs:
       - name: Check out repository
         uses: actions/checkout@v4
 
-      - name: Check for Xcode project
-        id: project
-        shell: bash
-        run: |
-          if [ -d "macos-app/Webcamera/Webcamera.xcodeproj" ]; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+      - name: Verify Xcode project
+        run: test -f macos-app/Webcamera/Webcamera.xcodeproj/project.pbxproj
 
       - name: Build macOS application
-        if: steps.project.outputs.exists == 'true'
         run: |
           xcodebuild \
             -project macos-app/Webcamera/Webcamera.xcodeproj \
@@ -70,34 +80,23 @@ jobs:
             CODE_SIGNING_ALLOWED=NO \
             clean build
 
-      - name: Create macOS archive
-        if: steps.project.outputs.exists == 'true'
+      - name: Verify application bundle
         run: |
-          APP_PATH="$RUNNER_TEMP/WebcameraDerivedData/Build/Products/Release/Webcamera.app"
+          test -d "$RUNNER_TEMP/WebcameraDerivedData/Build/Products/Release/Webcamera.app"
 
-          if [ ! -d "$APP_PATH" ]; then
-            echo "Webcamera.app was not created."
-            exit 1
-          fi
-
+      - name: Create macOS archive
+        run: |
           ditto \
             -c \
             -k \
             --sequesterRsrc \
             --keepParent \
-            "$APP_PATH" \
+            "$RUNNER_TEMP/WebcameraDerivedData/Build/Products/Release/Webcamera.app" \
             "$RUNNER_TEMP/Webcamera-macOS.zip"
 
       - name: Upload macOS application
-        if: steps.project.outputs.exists == 'true'
         uses: actions/upload-artifact@v4
         with:
           name: Webcamera-macOS
           path: ${{ runner.temp }}/Webcamera-macOS.zip
           if-no-files-found: error
-
-      - name: Skip missing macOS project
-        if: steps.project.outputs.exists != 'true'
-        run: |
-          echo "The macOS Xcode project has not been created yet."
-          echo "The macOS build will start automatically after the project is committed."
