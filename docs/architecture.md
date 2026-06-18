@@ -2,628 +2,712 @@
 
 ## Overview
 
-Webcamera is a multi-source camera viewer, controller, and recorder for macOS.
+Webcamera is a macOS multi-camera viewer, audio monitor, and recorder.
 
-The application can work with:
+The macOS application supports:
 
 - the built-in Mac camera;
 - USB cameras recognized by macOS;
-- other cameras exposed through AVFoundation;
-- one or more Android phones connected through USB and ADB.
+- virtual and other video devices exposed through AVFoundation;
+- simultaneous preview of multiple cameras;
+- independent configuration of every selected camera;
+- independent recording of every selected camera;
+- per-camera microphone selection;
+- live microphone monitoring;
+- stereo audio level meters;
+- optional mono monitoring and mono recording;
+- MOV and MP4 output.
 
-The user can select one camera for a large preview or enable multiple sources and display them simultaneously in a grid.
+A companion Android application is planned as a focused USB camera source.
 
-Each enabled source can also be recorded independently.
+Its purpose is limited to:
 
-The initial application displays and records camera feeds inside Webcamera. It does not register a system-wide virtual camera.
+- opening a camera on the Android phone;
+- encoding the camera image;
+- sending the video stream to the Mac over USB and ADB;
+- allowing the phone to appear inside Webcamera as another selectable camera.
 
-## Main components
+The Android application is not intended to duplicate the macOS recording interface, manage recordings on the phone, or become a general remote camera-control application.
 
-The project contains:
+Webcamera displays and records video inside its own macOS application. It does not currently register a system-wide macOS virtual camera.
 
-- a macOS multi-camera viewer and recorder;
-- an Android camera capture application;
-- a common macOS camera-source abstraction;
-- a shared Android control and video protocol;
-- ADB-based USB transport;
-- video decoding and recording components;
-- build, development, and release tooling.
+## Project components
 
-## Source model
+The repository contains or plans to contain:
 
-Every available camera is represented by a common camera-source abstraction.
+- a macOS multi-camera application;
+- an Android USB camera application;
+- local AVFoundation camera discovery;
+- independent capture controllers for local cameras;
+- preview and recording components;
+- per-camera audio configuration;
+- live audio monitoring;
+- ADB-based Android transport;
+- an Android-to-macOS video protocol;
+- an H.264 decoder for Android streams;
+- development, build, and release tooling.
 
-A source provides:
+## macOS application architecture
 
-- a stable identifier;
+The macOS application is implemented as a SwiftUI windowed application with AppKit and AVFoundation integration.
+
+The main responsibilities are divided between:
+
+- application state;
+- camera discovery;
+- camera models;
+- video-format models;
+- camera controllers;
+- capture-session synchronization;
+- video preview views;
+- audio monitoring;
+- recording;
+- settings;
+- camera tiles and preview windows.
+
+SwiftUI views display state and send user actions to the application model.
+
+Capture-session operations are handled outside the views.
+
+## Application state
+
+`AppState` owns application-level state, including:
+
+- camera authorization;
+- microphone authorization;
+- discovered cameras;
+- discovered audio devices;
+- selected camera identifiers;
+- selected video configurations;
+- selected audio devices;
+- per-camera recording formats;
+- per-camera mono settings;
+- camera controllers;
+- sidebar visibility;
+- recording destination;
+- global recording defaults.
+
+Every selected camera has its own `CameraController`.
+
+A controller is created when a camera is selected and removed after its preview has been detached safely.
+
+## Camera source model
+
+Every local camera is represented by `CameraDeviceInfo`.
+
+A local camera provides:
+
+- a stable AVFoundation device identifier;
 - a display name;
-- a source type;
-- connection state;
-- available video formats;
-- supported frame-rate ranges;
-- available camera controls;
-- current configuration;
-- a stream of video frames;
-- recording state;
-- performance statistics.
+- a source kind;
+- a reference to the underlying `AVCaptureDevice`;
+- supported video configurations.
 
-Source types include:
+Current source kinds include:
 
-    Android phone camera
     Built-in Mac camera
-    USB camera
-    Other AVFoundation camera
+    External camera
+    Android camera
 
-The macOS interface uses the same source model regardless of how frames are produced.
+Android sources will later use the same user-facing selection model, while their internal transport and decoding implementation will be different from local AVFoundation cameras.
 
-## Multi-source operation
+## Video format model
 
-The application supports multiple active sources.
+A camera format is represented by `VideoFormat`.
 
-Each source has its own:
+It contains:
+
+- width;
+- height;
+- frame rate;
+- AVFoundation format index;
+- media subtype;
+- stable identifier;
+- display title.
+
+Supported video configurations are discovered separately for every camera.
+
+The application does not invent unsupported resolutions or frame rates.
+
+When several AVFoundation formats represent the same displayed resolution and frame rate, Webcamera prefers a suitable pixel format for capture stability.
+
+## Multi-camera operation
+
+The application supports several selected and running cameras at the same time.
+
+Each camera has independent:
 
 - capture session;
-- selected camera;
-- resolution;
-- frame rate;
-- controls;
-- preview state;
-- recording session;
+- capture queue;
+- selected video format;
+- selected microphone;
+- mono-audio setting;
+- live-monitoring state;
+- audio meters;
+- running state;
+- recording state;
+- recording file format;
 - output file;
-- statistics;
 - error state.
 
 The user can:
 
-- display one selected camera;
-- display several cameras in a grid;
-- start or stop each source independently;
-- record one selected source;
-- record several sources simultaneously;
-- stop one recording without interrupting other recordings.
+- select or deselect cameras;
+- display selected cameras in a grid;
+- open an individual camera in a separate preview window;
+- start or stop one camera;
+- start or stop all selected cameras;
+- record one camera;
+- record all running cameras;
+- stop one recording without stopping the others;
+- use MOV for one camera and MP4 for another;
+- choose different microphones for different cameras.
 
-The implementation must not assume that only one camera is active.
+The implementation must never assume that only one camera is active.
 
-## macOS application
+## Main window
 
-The macOS application is a standard windowed application.
+The main macOS window contains:
 
-Its main window contains:
+- a camera sidebar;
+- a multi-camera grid;
+- start and stop controls;
+- record-all controls;
+- microphone permission controls;
+- recordings-folder access;
+- settings access.
 
-- a toolbar;
-- a camera-source menu;
-- a source-selection panel;
-- a single-source or grid preview;
-- format and frame-rate controls;
-- source-specific camera controls;
+The sidebar lists all cameras currently visible to AVFoundation.
+
+Each camera can be enabled or disabled independently.
+
+## Camera tiles
+
+Every selected camera is displayed in its own tile.
+
+A tile contains:
+
+- camera name;
+- camera type;
+- running or recording status;
+- video preview;
+- video format selector;
+- microphone selector;
+- live-monitoring button;
+- mono-audio switch;
+- left and right audio meters;
+- per-camera file-format selector;
+- start and stop controls;
 - recording controls;
-- recording destination controls;
-- connection information;
-- performance statistics.
+- separate preview-window control;
+- current microphone information;
+- last recording filename;
+- source-specific error messages.
 
-The toolbar includes a camera menu that lists all discovered sources.
+A failure in one tile must not stop other camera sessions or recordings.
 
-The user can mark one or more cameras as active.
+## Preview windows
 
-## Preview layouts
+Every selected camera can be opened in a separate macOS window.
 
-The application supports at least two preview modes:
+The preview window uses the same underlying capture session as the corresponding camera tile.
 
-### Single preview
+Multiple preview layers may reference the same session.
 
-One selected source fills the main preview area.
+Attaching or detaching a preview layer changes the AVFoundation session graph and therefore must be synchronized with session configuration, start, and stop operations.
 
-This mode is intended for detailed monitoring and camera configuration.
+## Capture-session synchronization
 
-### Grid preview
+AVFoundation may modify its internal connection graph when:
 
-Several active sources are displayed at the same time.
+- `startRunning()` is called;
+- `stopRunning()` is called;
+- configuration begins or commits;
+- inputs are added or removed;
+- outputs are added or removed;
+- an `AVCaptureVideoPreviewLayer` is attached;
+- an `AVCaptureVideoPreviewLayer` is detached.
 
-The grid adjusts to the number of selected sources.
+Performing these operations concurrently can cause crashes or deadlocks.
 
-Each preview tile shows:
+Webcamera uses a per-session synchronization gate.
 
-- source name;
-- connection state;
-- current resolution;
-- current FPS;
-- recording indicator;
-- source error when present.
+All session graph operations for the same `AVCaptureSession` use the same recursive lock.
 
-A source failure must not stop previews or recordings from other sources.
+This includes both:
 
-## Local macOS camera sources
+- `CameraController`;
+- `CameraPreviewNSView`.
 
-Local cameras use AVFoundation.
+A camera preview is detached before its controller removes the session configuration.
 
-The application discovers available video devices and observes connection changes.
+Controller teardown is delayed briefly after a SwiftUI tile is removed so that AppKit and Core Animation can finish dismantling the preview layer.
 
-For each device, it reads:
+## Local camera capture
 
-- supported formats;
-- dimensions;
-- pixel formats;
-- frame-rate ranges;
-- device position;
-- transport information where available;
-- supported camera controls.
+Every local camera uses its own `AVCaptureSession`.
 
-The application configures only values reported by the selected device.
+The session may contain:
 
-Possible controls include:
+- one video input;
+- one optional audio input;
+- one movie file output;
+- one audio data output for live monitoring and metering;
+- one or more video preview layers.
 
-- resolution;
-- frame rate;
-- video zoom;
-- focus mode;
-- focus point;
-- exposure mode;
-- exposure point;
-- exposure bias;
-- white balance;
-- mirroring;
-- rotation.
+Capture-session work is performed on a dedicated serial queue for every camera.
 
-Controls unavailable on a device are hidden or disabled.
+The main thread is used for published state and SwiftUI updates.
 
-Not every USB camera exposes manual controls through AVFoundation.
+## Camera configuration
 
-## Android camera source
+The user selects a video configuration separately for every camera.
 
-Every Android phone is represented as a separate camera source.
+Changing the selected configuration may require:
 
-An Android device uses:
+- stopping the session;
+- rebuilding inputs and outputs;
+- applying the selected device format;
+- restarting the session.
+
+Video format changes are disabled while that camera is recording.
+
+The application uses only configurations reported by AVFoundation.
+
+## Audio-device selection
+
+Microphones are discovered through AVFoundation.
+
+Every selected camera may use:
+
+- no audio;
+- the microphone associated with that camera;
+- another system microphone;
+- an audio-interface input visible to AVFoundation.
+
+Microphone selection is independent for every camera.
+
+When a microphone is unavailable or permission is denied, the camera may still preview and record video without audio.
+
+## Live audio monitoring
+
+Webcamera supports live monitoring of the microphone selected for a camera.
+
+Live monitoring uses:
+
+    AVCaptureAudioDataOutput
+          ↓
+    CMSampleBuffer
+          ↓
+    AVAudioPCMBuffer
+          ↓
+    AVAudioConverter
+          ↓
+    AVAudioPlayerNode
+          ↓
+    AVAudioEngine
+          ↓
+    macOS audio output
+
+Monitoring can be enabled or disabled independently for every camera.
+
+Live monitoring is not performed through `AVCaptureAudioPreviewOutput`, because that output does not provide the required channel conversion for reliable mono monitoring.
+
+## Audio meters
+
+Each camera tile displays separate left and right audio levels.
+
+Audio levels are calculated from the PCM buffers used by the monitoring pipeline.
+
+The displayed level is derived from the RMS value of each channel and normalized for the interface.
+
+When mono mode is enabled:
+
+- the monitoring signal is converted to one channel;
+- the mono signal is played through both output channels;
+- both meters display the resulting mono level.
+
+Meters are reset when monitoring, audio capture, or the camera session stops.
+
+## Mono audio
+
+Mono mode is configured separately for every camera.
+
+When mono is enabled:
+
+- live monitoring is converted to a one-channel audio buffer;
+- the one-channel signal is mixed to both the left and right macOS output channels;
+- recording requests a one-channel AAC audio track;
+- left and right meters display the same mono level.
+
+This is useful for microphones and audio interfaces that provide a microphone only on one side of a stereo input.
+
+Mono mode cannot be changed while that camera is recording.
+
+## Recording subsystem
+
+Local camera recording uses `AVCaptureMovieFileOutput`.
+
+Every camera controller owns its own movie output and recording state.
+
+Recording is independent for every camera.
+
+Each recording contains:
+
+- video from the selected camera;
+- optional audio from the selected microphone;
+- the selected mono or stereo audio configuration;
+- the selected container format;
+- a unique output filename.
+
+Stopping one recording does not stop:
+
+- the camera preview;
+- live monitoring;
+- another camera;
+- another recording.
+
+## Recording formats
+
+The application supports:
+
+    MOV
+    MP4
+
+MOV recordings are written directly as QuickTime movie files.
+
+For MP4:
+
+1. capture is written to a temporary MOV file;
+2. recording finishes;
+3. `AVAssetExportSession` converts the captured file to MP4;
+4. the temporary MOV file is removed after successful export.
+
+If MP4 export fails, the temporary MOV file is retained so that the recording is not lost.
+
+## Per-camera recording format
+
+Every selected camera can choose its own recording format.
+
+For example:
+
+    Camera A → MOV
+    Camera B → MP4
+    Camera C → MOV
+
+The global format in Settings acts as the default format applied to cameras that do not yet have a camera-specific selection.
+
+The global format can also be used when starting recordings for all selected cameras.
+
+Per-camera choices remain independent.
+
+## Recording destination
+
+The recording destination is selected in Settings through a standard macOS folder picker.
+
+When no custom destination is selected, Webcamera uses the user’s Downloads directory.
+
+Every camera writes a separate file.
+
+Filename components are sanitized before use.
+
+Example filenames:
+
+    2026-06-18_12-30-00_FaceTime-HD-Camera.mov
+    2026-06-18_12-30-00_Logitech-C922.mp4
+
+Existing destination files are not silently overwritten.
+
+## Recording state and teardown
+
+A camera cannot be reconfigured while its movie output is recording.
+
+When the user stops or removes a camera during recording:
+
+- Webcamera first requests the recording to stop;
+- it waits for the recording delegate callback;
+- it completes MOV finalization or MP4 export;
+- it then stops or dismantles the capture session.
+
+This prevents incomplete files and unsafe session changes.
+
+## Settings
+
+The macOS Settings window contains:
+
+- recording destination;
+- global default file format;
+- an explanation that the global format applies to all cameras unless a camera-specific format is selected;
+- information about camera-format reporting.
+
+Android support is described as a USB camera-source feature rather than as a separate recording system.
+
+## Android application scope
+
+The Android application has one primary responsibility:
+
+    provide the Android phone camera to the Mac as a USB camera source
+
+The Android application will:
+
+- request camera permission;
+- list available front and rear cameras;
+- allow a camera to be selected locally when needed;
+- open the selected camera;
+- choose a stable supported capture configuration;
+- encode video as H.264;
+- expose a small local control server;
+- expose a video-stream server;
+- send video to the Mac through ADB port forwarding;
+- display basic connection and streaming status;
+- run streaming in a foreground service when required.
+
+The initial Android application will not implement:
+
+- recording files on the phone;
+- a recording gallery;
+- editing;
+- cloud upload;
+- multi-camera recording on the phone;
+- general-purpose remote camera controls;
+- audio transmission;
+- remote zoom, focus, exposure, or torch controls unless added in a later version.
+
+Recording remains a macOS responsibility.
+
+## Android source on macOS
+
+An Android phone will appear in the macOS application as another selectable camera source.
+
+For every connected Android phone, the Mac will own:
 
 - one ADB device serial;
+- one forwarding configuration;
 - one control connection;
 - one video connection;
-- one decoder;
-- one set of camera capabilities;
-- one selected phone camera;
-- one recording state on the Mac.
+- one H.264 decoder;
+- one preview state;
+- one Mac-side recording state;
+- one independent error state.
 
-The Android application:
+The Mac will:
 
-- discovers front and rear cameras;
-- discovers supported resolutions;
-- discovers supported frame rates;
-- reports zoom support and zoom range;
-- reports focus modes;
-- reports flash and torch support;
-- configures camera capture;
-- encodes video as H.264;
-- sends encoded frames through USB;
-- receives control commands from the Mac;
-- reports errors and streaming statistics.
-
-The macOS application:
-
-- detects connected Android devices;
-- creates ADB forwarding rules;
-- connects to Android control and video servers;
-- requests capabilities;
-- sends configuration and runtime controls;
-- decodes H.264 through VideoToolbox;
-- publishes decoded frames to the common frame pipeline.
+- discover phones through ADB;
+- create port-forwarding rules;
+- connect to the Android application;
+- obtain basic device and stream information;
+- start and stop video streaming;
+- receive H.264 packets;
+- decode frames using VideoToolbox;
+- display decoded frames;
+- record the Android source on the Mac.
 
 ## Android USB runtime flow
 
     Android camera
           ↓
-    Camera controller
+    Android camera capture
           ↓
     MediaCodec H.264 encoder
           ↓
-    Android video server
+    Android loopback video server
           ↓
-    ADB over USB
+    ADB USB port forwarding
           ↓
-    macOS video connection
+    macOS video transport
           ↓
-    VideoToolbox decoder
+    VideoToolbox H.264 decoder
           ↓
-    Common frame pipeline
+    macOS preview
           ↓
-    Preview and recording
+    macOS recording
 
-## Local camera runtime flow
+## Android recording behavior
 
-    macOS or USB camera
-          ↓
-    AVCaptureSession
-          ↓
-    AVCaptureVideoDataOutput
-          ↓
-    Common frame pipeline
-          ↓
-    Preview and recording
+The Android phone does not write Webcamera recording files.
 
-## Shared frame pipeline
+The Mac records the received Android video stream.
 
-All captured or decoded frames are represented by a common frame structure.
+This keeps the following behavior consistent across sources:
 
-A frame contains:
+- recording destination;
+- filename generation;
+- recording controls;
+- simultaneous recordings;
+- file-format selection;
+- error reporting.
 
-    source identifier
-    pixel buffer
-    presentation timestamp
-    width
-    height
-    rotation
-    mirroring state
+The initial Android source is video-only.
 
-The shared frame pipeline distributes frames to:
+Audio for Android sources may be considered separately in a future version.
 
-- the preview renderer;
-- the recording subsystem;
-- performance-statistics collectors;
-- possible future effects;
-- a possible future virtual-camera extension.
+## Android compatibility target
 
-Preview rendering and recording must not block source capture threads.
+The primary Android compatibility target is:
 
-## Recording subsystem
-
-Recording is performed on the Mac.
-
-Each active recording has its own recording session.
-
-A recording session contains:
-
-- source identifier;
-- destination URL;
-- container format;
-- video codec;
-- width;
-- height;
-- frame rate;
-- start timestamp;
-- written frame count;
-- dropped frame count;
-- recording state.
-
-The user chooses a destination directory through a standard macOS folder picker.
-
-The selected directory may be remembered using a security-scoped bookmark when sandboxing requires it.
-
-Each camera is written to a separate file.
-
-Example filenames:
-
-    Webcamera_Meizu-MX5_Rear_2026-06-18_12-30-00.mp4
-    Webcamera_FaceTime-HD-Camera_2026-06-18_12-30-00.mp4
-
-Simultaneous recording creates one file per source.
-
-Stopping one recording does not stop its preview or other recordings.
-
-## Recording format
-
-The initial recording container is:
-
-    MP4
-
-The preferred video codec is:
-
-    H.264
-
-Local cameras may be encoded on the Mac using AVAssetWriter and VideoToolbox.
-
-Android streams already arrive as H.264, but the Mac may either:
-
-- remux compatible encoded frames into MP4;
-- decode and re-encode frames;
-- use a fallback recording path when timestamps or codec data are incompatible.
-
-The initial implementation may use decoded pixel buffers and a common Mac-side writer for consistency.
-
-## Camera controls
-
-The common source-control model includes optional controls for:
-
-- resolution;
-- frame rate;
-- zoom;
-- focus mode;
-- autofocus trigger;
-- focus point;
-- exposure mode;
-- exposure point;
-- exposure compensation;
-- white balance;
-- mirroring;
-- rotation;
-- torch or flashlight;
-- bitrate for Android video transport.
-
-Every control declares whether it is:
-
-- supported;
-- readable;
-- writable;
-- available during streaming;
-- available only after capture restart.
-
-The interface must not display unsupported controls as functional.
-
-## Android flashlight and torch
-
-The Android rear camera may expose flash modes.
-
-When supported, the Mac can request:
-
-    off
-    torch
-    auto
-
-The `torch` mode keeps the phone light enabled continuously while streaming.
-
-Torch availability depends on:
-
-- the selected camera;
-- Android camera API support;
-- Flyme firmware;
-- the current capture mode;
-- device temperature.
-
-If the camera or firmware rejects the request, Android reports an error and the Mac returns the control to its previous state.
-
-The torch control is not shown for cameras that do not report flash support.
-
-## Zoom
-
-Zoom is source-specific.
-
-Android reports:
-
-- whether zoom is supported;
-- minimum zoom;
-- maximum zoom;
-- supported zoom steps or ratios.
-
-Local AVFoundation cameras report their supported video zoom factor range.
-
-The Mac interface normalizes zoom controls while preserving the actual source limits.
-
-Digital zoom may reduce image quality.
-
-## Focus
-
-A source may support:
-
-- locked focus;
-- continuous autofocus;
-- one-time autofocus;
-- manual lens position;
-- focus point selection.
-
-Android 5.1 devices may expose only a subset of these options.
-
-USB cameras often do not expose focus control through AVFoundation.
-
-## Android camera implementation
-
-The Android target platform is:
-
+    Meizu MX5
     Android 5.1
     API 22
+    Flyme 6.2.0.0G
 
-The implementation evaluates both:
+The implementation may evaluate both:
 
 - Camera2;
 - the legacy Camera API.
 
-Camera2 is used only when its device implementation is sufficiently complete and stable.
+The legacy Camera API remains an important compatibility path for Android 5.1 devices with incomplete Camera2 support.
 
-The legacy Camera API remains the compatibility path for the Meizu MX5.
+Video encoding uses `MediaCodec` and prefers a hardware H.264 encoder.
 
-Video encoding uses MediaCodec and prefers a hardware H.264 encoder.
+## Android configuration policy
 
-## Camera capability discovery
+The first Android version should prefer reliability over exposing every possible device option.
 
-A usable Android configuration is the intersection of:
+It may initially use one stable configuration chosen from:
 
-- camera output sizes;
-- camera frame-rate ranges;
-- encoder input sizes;
-- encoder frame-rate support;
-- encoder bitrate support;
-- tested device stability.
-
-The Android application reports only configurations that are expected to be usable.
-
-Configuration may still fail at runtime and must return a clear error.
-
-## 4K support
-
-4K is displayed only when the complete selected-source pipeline supports it.
-
-For Android this requires:
-
-- a compatible camera output;
-- a compatible H.264 encoder;
+- a supported camera output size;
 - a supported frame rate;
-- successful capture and encoder startup;
-- stable USB transport;
-- acceptable thermal behavior.
+- a compatible H.264 encoder size;
+- a stable bitrate;
+- tested device behavior.
 
-For local cameras, 4K is shown only when AVFoundation reports a corresponding format.
+The Android application reports the configuration that was actually applied.
 
-Webcamera does not invent or upscale unsupported source formats.
+Advanced remote controls are outside the first Android milestone.
 
 ## Android background operation
 
-Android streaming runs from a foreground service.
+Streaming may run from an Android foreground service.
 
-The service owns:
+The service may own:
 
 - camera capture;
 - H.264 encoding;
-- TCP servers;
+- loopback TCP servers;
 - wake lock;
 - persistent notification;
-- camera controls.
+- connection state.
 
-The activity is used for:
+The Android activity is used for:
 
-- camera permission;
-- local preview;
-- status display;
-- diagnostics.
+- permission requests;
+- camera selection;
+- local status;
+- basic diagnostics.
 
-The activity may stop drawing its local preview while the service continues streaming.
+The screen may dim or turn off while the foreground service continues streaming, subject to Flyme power-management behavior.
 
-The screen may dim or turn off.
+## USB transport
 
-Flyme power-management behavior must be tested on the target phone.
+Android communication uses ADB port forwarding over USB.
 
-## Screen and thermal behavior
+The phone-side servers bind only to loopback.
 
-Turning off the phone screen reduces display power consumption but does not remove heat generated by the camera and encoder.
+No Wi-Fi connection is required.
 
-The Android application reports or logs when possible:
+The transport uses separate connections for:
 
-- encoder errors;
-- camera errors;
-- dropped frames;
-- stream restarts;
-- thermal information;
-- torch state.
+- control messages;
+- encoded video packets.
 
-The application may disable the torch or stop the stream if the platform reports a critical failure.
-
-## Control protocol
-
-Control messages use newline-delimited JSON.
-
-The protocol supports:
-
-    device identity
-    capability discovery
-    camera selection
-    resolution selection
-    frame-rate selection
-    bitrate selection
-    zoom control
-    focus control
-    exposure control
-    flash and torch control
-    stream start and stop
-    status messages
-    keepalive
-    errors
-
-## Video protocol
-
-Android video uses framed binary H.264 packets.
-
-The stream contains:
-
-- codec configuration;
-- key frames;
-- regular frames;
-- timestamps;
-- sequence numbers;
-- end-of-stream packets.
-
-Every Android source has an independent decoder.
+The control protocol remains intentionally small for the first Android version.
 
 ## Threading
+
+### macOS local cameras
+
+Each camera has:
+
+- one serial capture queue;
+- synchronized capture-session graph access;
+- independent recording state;
+- an independent audio-processing queue;
+- main-thread state publication.
+
+### macOS Android sources
+
+Each Android source will have independent:
+
+- ADB state;
+- control transport;
+- video transport;
+- decoder state;
+- frame queue;
+- preview state;
+- recording state.
 
 ### Android
 
 The Android UI runs on the main thread.
 
-Camera callbacks, encoder output, and network operations run on background threads.
+Camera capture, encoding, socket operations, and video transmission run on background threads.
 
-Video transmission must not block the camera or encoder callback threads.
+Video transmission must not block camera or encoder callbacks.
 
-### macOS
+## Performance
 
-Each local camera has a dedicated capture session and processing queue.
-
-Each Android camera has independent:
-
-- transport queues;
-- protocol buffers;
-- decoder state;
-- frame pipeline.
-
-Recording uses independent writing queues.
-
-Preview updates are delivered safely to the rendering layer.
-
-The main thread is reserved for application state and interface updates.
-
-## Performance management
-
-Simultaneous high-resolution sources can consume significant:
+Simultaneous high-resolution sources may consume significant:
 
 - USB bandwidth;
 - memory;
 - CPU;
 - GPU;
-- hardware encoder and decoder resources;
-- storage bandwidth.
+- hardware decoder resources;
+- storage bandwidth;
+- audio resources.
 
-The application must remain responsive when several cameras are active.
+The application should remain responsive when several sources are active.
 
 Possible safeguards include:
 
-- limiting preview refresh rate;
-- reducing inactive tile rendering rate;
-- bounding frame queues;
+- bounded frame queues;
 - dropping late preview frames;
-- displaying performance warnings;
-- preventing unsupported recording combinations;
-- allowing separate preview and recording quality.
+- limiting preview refresh rate;
+- reporting decoder or capture delays;
+- preventing unsupported configurations;
+- isolating failures to one source.
 
 ## Reliability
 
-The application must tolerate:
+The macOS application must tolerate:
 
+- local camera disconnection;
+- camera reconnection;
+- external camera driver failures;
+- capture-session start failure;
+- preview-layer recreation;
+- recording failure;
+- MP4 export failure;
+- microphone removal;
+- unavailable recording destination;
 - Android USB disconnection;
-- ADB daemon restart;
+- ADB restart;
 - Android application restart;
 - Android encoder restart;
-- local camera removal;
-- USB camera insertion;
-- camera becoming unavailable;
-- malformed messages;
 - incomplete video packets;
-- decoder failure;
-- writer failure;
-- insufficient disk space;
-- destination-folder loss;
-- format changes;
-- one source failing while others continue.
+- H.264 decoder failure.
 
-Each source reports an independent state:
-
-    unavailable
-    connecting
-    configuring
-    streaming
-    recording
-    stopped
-    failed
-
-Recording state is tracked separately from streaming state.
+One source failure must not interrupt unrelated sources.
 
 ## iPhone scope
 
-The current project does not include a wired iOS 12 capture application.
+The project does not include an iOS capture application.
 
-The Android USB transport depends on ADB and cannot be reused for iPhone.
+ADB transport is Android-specific and cannot be reused for iPhone.
 
-Old iPhone support would require a separate iOS application, signing, installation, and another transport implementation.
+Supporting iPhone would require:
 
-It is outside the current project scope.
+- a separate iOS application;
+- Apple signing and installation;
+- another wired or network transport;
+- a separate compatibility effort.
+
+iPhone support is outside the current project scope.
 
 ## Virtual camera scope
 
-The initial version shows and records video only inside Webcamera.
+The current application previews and records cameras only inside Webcamera.
 
-System-wide virtual-camera output is postponed.
+System-wide virtual-camera output is not part of the current implementation.
 
-The common frame pipeline allows a Camera Extension to be added later without rewriting source capture, Android transport, preview, and recording systems.
+A macOS Camera Extension may be considered later as a separate feature.
