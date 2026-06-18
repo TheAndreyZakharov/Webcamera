@@ -1,0 +1,32 @@
+# macOS
+.DS_Store
+DerivedData/
+*.xcuserstate
+xcuserdata/
+macos-app/**/DerivedData/
+macos-app/**/*.xcworkspace/xcuserdata/
+
+# Swift
+.build/
+.swiftpm/
+
+# Android
+android-app/local.properties
+android-app/.gradle/
+android-app/**/build/
+*.apk
+*.aab
+
+# Release
+release/
+
+# Logs and streams
+*.log
+*.h264
+*.mp4
+*.mov
+*.yuv
+
+# IDE
+.idea/
+.vscode/*.log
