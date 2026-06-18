@@ -1,0 +1,19 @@
+{
+  "files.exclude": {
+    "**/.DS_Store": true,
+    "**/.gradle": true,
+    "**/build": true,
+    "**/DerivedData": true
+  },
+  "search.exclude": {
+    "**/.gradle": true,
+    "**/build": true,
+    "**/DerivedData": true,
+    "**/release": true
+  },
+  "java.configuration.updateBuildConfiguration": "automatic",
+  "swift.path": "/usr/bin/swift",
+  "editor.formatOnSave": false,
+  "files.trimTrailingWhitespace": true,
+  "files.insertFinalNewline": true
+}

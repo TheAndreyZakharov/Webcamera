@@ -1,0 +1,35 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Check environment",
+      "type": "shell",
+      "command": "./scripts/check-environment.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "Build Android",
+      "type": "shell",
+      "command": "cd android-app && ./gradlew clean assembleDebug",
+      "problemMatcher": []
+    },
+    {
+      "label": "Install Android",
+      "type": "shell",
+      "command": "./scripts/install-android.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "Test USB transport",
+      "type": "shell",
+      "command": "./scripts/test-usb-transport.sh",
+      "problemMatcher": []
+    },
+    {
+      "label": "Open macOS project",
+      "type": "shell",
+      "command": "./scripts/run-macos.sh",
+      "problemMatcher": []
+    }
+  ]
+}
