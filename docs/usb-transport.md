@@ -2,18 +2,18 @@
 
 ## Overview
 
-Webcamera uses Android Debug Bridge port forwarding as its initial wired transport.
+Webcamera uses Android Debug Bridge port forwarding for wired Android camera sources.
 
-The Android phone connects to the Mac through a USB cable.
+One USB cable provides:
 
-The same cable provides:
-
-- device charging;
-- ADB communication;
-- control-message transport;
+- phone charging;
+- ADB access;
+- control transport;
 - encoded video transport.
 
-No Wi-Fi connection is required for the Android source.
+No Wi-Fi connection is required for Android sources.
+
+Built-in and USB cameras connected directly to the Mac do not use this transport.
 
 ## Runtime topology
 
@@ -27,11 +27,13 @@ No Wi-Fi connection is required for the Android source.
           ↓
     macOS localhost TCP clients
           ↓
-    Decoder and preview
+    Decoder
+          ↓
+    Preview and recording
 
 ## Ports
 
-Webcamera uses two TCP connections:
+Android-side ports:
 
     Control port: 27283
     Video port:   27284
@@ -41,168 +43,207 @@ The Android application listens on:
     127.0.0.1:27283
     127.0.0.1:27284
 
-The macOS application creates matching local forwarding rules:
+For one device, the Mac may use matching local ports.
 
-    adb forward tcp:27283 tcp:27283
-    adb forward tcp:27284 tcp:27284
+For multiple Android devices, each device receives different local Mac ports.
 
-The macOS application then connects to:
+Example:
 
-    127.0.0.1:27283
-    127.0.0.1:27284
+    Device A:
+        Mac control: 27283
+        Mac video:   27284
+
+    Device B:
+        Mac control: 27383
+        Mac video:   27384
+
+Both devices still use Android ports 27283 and 27284.
 
 ## Control connection
 
-The control connection carries newline-delimited JSON messages.
+The control connection carries JSON messages for:
 
-It is used for:
-
-- device identification;
+- device identity;
 - camera discovery;
-- format discovery;
-- resolution selection;
-- frame-rate selection;
-- bitrate selection;
-- focus control;
-- flash control;
-- stream start and stop commands;
-- status updates;
+- resolution discovery;
+- FPS discovery;
+- zoom capabilities;
+- focus capabilities;
+- exposure capabilities;
+- flash and torch capabilities;
+- encoder discovery;
+- configuration;
+- stream control;
+- runtime controls;
+- status;
 - errors;
-- keepalive messages.
-
-The control connection carries only small messages.
+- keepalive.
 
 ## Video connection
 
-The video connection carries binary H.264 packets.
+The video connection carries framed H.264 packets.
 
-It is separated from control messages because video frames:
+It is independent of the control connection so:
 
-- are much larger;
-- arrive continuously;
-- require independent buffering;
-- must not delay control commands;
-- may need to be restarted without rebuilding the control session.
+- large video frames do not delay commands;
+- controls remain responsive;
+- video can restart without losing device metadata;
+- each Android source can have its own decoder.
 
-Each video packet contains:
+## Multiple Android devices
 
-1. a fixed-size header;
-2. an encoded payload.
+The macOS application may manage several Android devices simultaneously.
 
-The packet header includes:
+Each Android source uses:
 
-    magic
-    protocol version
-    flags
-    sequence number
-    presentation timestamp
-    payload length
+- its own ADB serial;
+- its own forwarding rules;
+- its own control socket;
+- its own video socket;
+- its own decoder;
+- its own selected phone camera;
+- its own recording session.
 
-## Forwarding lifecycle
+The Mac must never send an ADB command without the selected serial when multiple devices are connected.
 
-The macOS application is responsible for ADB forwarding.
-
-At startup, it:
-
-1. locates connected Android devices;
-2. verifies that exactly one usable device is available;
-3. removes stale Webcamera forwarding rules;
-4. creates control and video forwarding rules;
-5. starts or verifies the Android application;
-6. connects to the local forwarded ports.
-
-After USB reconnection, the application recreates the forwarding rules.
-
-ADB forwarding is not assumed to survive:
-
-- cable disconnection;
-- ADB daemon restart;
-- phone reboot;
-- USB mode change;
-- developer-option changes.
-
-## Device selection
-
-The application must not hardcode a phone serial number.
-
-When one Android device is connected, it is selected automatically.
-
-When multiple Android devices are connected, the macOS interface must display them and allow the user to choose one.
-
-ADB commands for a selected device use:
+Commands use:
 
     adb -s DEVICE_SERIAL
 
-The selected serial is used for:
+## Forwarding lifecycle
 
-- shell commands;
-- application launch;
-- port forwarding;
-- device information;
-- diagnostics.
+For every selected Android device, the Mac:
 
-## USB stability
+1. verifies that the device is online;
+2. allocates unused local ports;
+3. removes stale forwarding rules for those ports;
+4. creates control forwarding;
+5. creates video forwarding;
+6. starts or verifies the Android application;
+7. connects to the control server;
+8. connects to the video server when streaming starts.
 
-Before streaming, the macOS application verifies:
+Forwarding rules are recreated after:
 
-    adb get-state
-    adb shell echo connected
+- cable reconnection;
+- ADB restart;
+- phone restart;
+- application restart;
+- device selection change.
 
-During streaming, the control connection acts as the main liveness signal.
+## Torch commands
 
-If the connection fails, the application checks ADB again and attempts to recreate the transport.
+Torch state is sent through the control connection.
 
-The transport manager must distinguish between:
+Torch video data does not require a separate channel.
 
-- Android application stopped;
-- TCP server stopped;
-- ADB device offline;
-- USB cable disconnected;
-- forwarding rule missing;
-- decoder failure.
+A torch request is valid only when:
+
+- the selected Android camera reports flash support;
+- the selected mode supports continuous torch;
+- the Android camera session is active.
+
+Android returns success or an error.
+
+Torch failure must not close the video transport.
+
+## Runtime camera controls
+
+The following commands may travel through the existing control connection:
+
+    zoom
+    focus
+    autofocus trigger
+    exposure
+    flash
+    torch
+    bitrate
+    mirroring
+
+Some commands can be applied without restarting capture.
+
+Other configuration changes require:
+
+    stop
+    configure
+    start
+
+Resolution and FPS changes normally restart the Android camera and encoder.
+
+## Recording
+
+Android video is recorded on the Mac.
+
+The USB transport does not write files on the phone.
+
+This avoids:
+
+- consuming phone storage;
+- transferring completed files later;
+- maintaining two recording implementations.
+
+Each Android source supplies frames to an independent Mac recording writer.
+
+Recording several Android devices creates several simultaneous video files.
 
 ## Bandwidth
 
-Raw video is not transported over ADB.
+Raw frames are not sent over ADB.
 
-The Android application encodes video as H.264 before transmission.
+Android encodes H.264 before transmission.
 
-Approximate bitrate is configured according to:
+Total USB and processing load increases with:
 
+- number of Android sources;
 - resolution;
 - frame rate;
-- camera capabilities;
-- encoder capabilities;
-- thermal stability;
-- USB stability.
+- bitrate;
+- torch-related thermal load;
+- simultaneous recording.
 
-The user may request a bitrate, but Android must validate it against the selected encoder.
+The application must report failures rather than silently reducing quality unless an explicit automatic-quality mode is added.
 
 ## 4K transport
 
-A 4K option is shown only when the complete Android pipeline supports it.
+4K is shown only when:
 
-The application checks:
+- the camera supports the output;
+- the encoder supports the size;
+- the selected FPS is valid;
+- the encoder starts;
+- transport remains stable.
 
-- camera output size;
-- encoder input size;
-- frame-rate compatibility;
-- successful encoder configuration;
-- successful capture startup.
+Multiple simultaneous 4K Android sources may exceed practical hardware or storage limits.
 
-A camera advertising 4K photography does not automatically guarantee stable 4K real-time H.264 streaming.
+The application may warn the user when a selected combination is likely to be unstable.
 
-If 4K configuration fails, the application reports the error and preserves lower-resolution options.
+## Stability and recovery
+
+The transport manager distinguishes between:
+
+    device disconnected
+    device offline
+    Android application stopped
+    control server unavailable
+    video server unavailable
+    forwarding missing
+    protocol error
+    decoder error
+
+One Android source failure must not interrupt:
+
+- local Mac cameras;
+- USB cameras;
+- other Android devices;
+- recordings from other sources.
 
 ## Security
 
-The Android TCP servers bind only to the loopback interface.
+Android servers bind only to loopback.
 
-They are not exposed to Wi-Fi or mobile networks.
+They are reachable from the Mac through ADB forwarding only.
 
-The Mac reaches them only through ADB forwarding.
-
-The initial protocol does not include encryption because traffic remains inside the USB and local ADB transport.
+The initial protocol does not use encryption because the transport remains inside the USB and ADB connection.
 
 ## Diagnostics
 
@@ -210,34 +251,31 @@ List devices:
 
     ADB_LIBUSB=0 adb devices -l
 
-Check the selected device:
+Check one device:
 
     ADB_LIBUSB=0 adb -s DEVICE_SERIAL get-state
 
-Test shell access:
+Test shell:
 
     ADB_LIBUSB=0 adb -s DEVICE_SERIAL shell echo connected
 
-Create forwarding rules:
+Create forwarding:
 
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward tcp:27283 tcp:27283
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward tcp:27284 tcp:27284
+    ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward tcp:LOCAL_CONTROL_PORT tcp:27283
+    ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward tcp:LOCAL_VIDEO_PORT tcp:27284
 
 List forwarding rules:
 
     ADB_LIBUSB=0 adb forward --list
 
-Remove forwarding rules:
+Remove one rule:
 
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward --remove tcp:27283
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward --remove tcp:27284
+    ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward --remove tcp:LOCAL_CONTROL_PORT
 
 ## iPhone support
 
-The current wired transport is Android-specific because it relies on ADB.
+The ADB transport is Android-specific.
 
-Old iPhones are not supported by this transport.
+Old iPhones are not supported by this wired transport.
 
-Supporting an iPhone would require a separate iOS application and a different communication layer.
-
-That work is outside the current project scope.
+Adding iPhone support would require a separate iOS application and another communication system.

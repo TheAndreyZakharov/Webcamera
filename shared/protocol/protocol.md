@@ -2,137 +2,96 @@
 
 ## Overview
 
-The Webcamera protocol connects the Android capture application to the macOS viewer application.
+The Webcamera protocol connects an Android capture application to the macOS multi-camera viewer and recorder.
 
-It is used only for Android camera sources transported through ADB over USB.
+The protocol is used only by Android sources transported through ADB over USB.
 
-Built-in Mac cameras, USB cameras, and other AVFoundation devices do not use this protocol. They are accessed directly by the macOS application through AVFoundation.
+Built-in Mac cameras, USB cameras, and other AVFoundation devices are controlled directly by the macOS application.
 
-The Android transport uses two independent TCP connections:
+Every Android device has independent:
 
-- a control connection for commands, capabilities, status, and errors;
-- a video connection for encoded H.264 packets.
+- control connection;
+- video connection;
+- camera configuration;
+- decoder state;
+- preview state;
+- recording state.
 
 ## Protocol version
 
-The initial protocol version is:
+Initial version:
 
     1
 
-Every control message includes a `version` field.
+Every JSON control message contains a `version` field.
 
-The receiver must reject unsupported major protocol versions and report a clear compatibility error.
+Unsupported versions are rejected with an explicit error.
 
-## Ports
-
-Default Android ports:
+## Android ports
 
     Control port: 27283
     Video port:   27284
 
-The Android application binds both servers to the loopback interface:
+Android binds to:
 
     127.0.0.1:27283
     127.0.0.1:27284
 
-The macOS application reaches them through ADB port forwarding.
+Local Mac ports are allocated separately for each connected Android device.
 
-The local Mac ports may differ when multiple Android devices are connected.
+## Connection lifecycle
 
-For example:
-
-    Device A:
-        Mac control port: 27283
-        Mac video port:   27284
-
-    Device B:
-        Mac control port: 27383
-        Mac video port:   27384
-
-The Android-side ports remain unchanged.
-
-## Transport lifecycle
-
-The expected connection sequence is:
-
-1. The Android application starts its control and video servers.
-2. The macOS application detects the Android device through ADB.
-3. The macOS application creates forwarding rules.
-4. The Mac connects to the control server.
-5. Android sends `hello`.
-6. The Mac sends `getCapabilities`.
-7. Android sends `capabilities`.
-8. The Mac sends `configure`.
-9. Android validates the requested configuration.
+1. Android starts control and video servers.
+2. Mac detects the device through ADB.
+3. Mac allocates local ports.
+4. Mac creates forwarding rules.
+5. Mac connects to the control server.
+6. Android sends `hello`.
+7. Mac sends `getCapabilities`.
+8. Android sends `capabilities`.
+9. Mac sends `configure`.
 10. Android sends `configured`.
-11. The Mac connects to the video server.
-12. The Mac sends `start`.
-13. Android sends `status` with the `streaming` state.
-14. Android sends codec configuration and encoded frames.
-15. The Mac sends `stop` or closes the connection when streaming ends.
+11. Mac connects to the video server.
+12. Mac sends `start`.
+13. Android sends `status: streaming`.
+14. Android sends codec configuration.
+15. Android sends video frames.
+16. Mac may send runtime control commands.
+17. Mac records decoded frames when requested.
+18. Mac sends `stop` when the source is stopped.
 
-After reconnection, configuration and codec state must be established again.
+After reconnection, capabilities, configuration, and codec state are established again.
 
 ## Control transport
 
-Control messages are UTF-8 JSON objects separated by newline characters.
+Control messages are newline-delimited UTF-8 JSON objects.
 
-Each line contains one complete JSON object.
+TCP receivers must support:
 
-Example:
+- partial messages;
+- several messages in one read;
+- malformed JSON;
+- maximum message size;
+- clean connection closure.
 
-    {
-      "version": 1,
-      "type": "hello",
-      "sequence": 1,
-      "timestamp": 12540
-    }
+Maximum recommended control message size:
 
-TCP is a byte stream.
+    1 MiB
 
-The receiver must:
+## Common fields
 
-- buffer incomplete data;
-- split complete messages using newline characters;
-- process multiple messages from one read;
-- preserve trailing partial data;
-- reject malformed JSON safely;
-- enforce a maximum message size.
-
-## Common control fields
-
-Every control message should contain:
+Every control message contains:
 
     version
     type
     sequence
     timestamp
 
-### version
+`timestamp` uses a monotonic millisecond clock when possible.
 
-Integer protocol version.
-
-### type
-
-String message type.
-
-### sequence
-
-Unsigned logical message sequence number.
-
-Sequence numbers are generated independently by each endpoint.
-
-### timestamp
-
-Monotonic timestamp in milliseconds when possible.
-
-The timestamp is used for diagnostics and latency measurements. It is not a wall-clock time.
-
-## Android device identity
+## Device identity
 
 ### hello
-
-Sent by Android immediately after the control connection is established.
 
 Fields:
 
@@ -145,132 +104,68 @@ Fields:
     buildDisplay
     applicationVersion
 
-Example:
+The Android application must not rely on a hardcoded ADB serial.
 
-    {
-      "version": 1,
-      "type": "hello",
-      "sequence": 1,
-      "timestamp": 12540,
-      "deviceId": "85UBBMD222YN",
-      "deviceName": "Meizu MX5",
-      "manufacturer": "Meizu",
-      "model": "MX5",
-      "androidVersion": "5.1",
-      "apiLevel": 22,
-      "buildDisplay": "Flyme 6.2.0.0G",
-      "applicationVersion": "1.0.0"
-    }
-
-The protocol must not require a hardcoded device serial.
-
-The macOS application obtains the ADB serial independently and may associate it with the connected control session.
+The Mac associates the protocol connection with the ADB device that owns the forwarding rule.
 
 ## Capability discovery
 
 ### getCapabilities
 
-Sent by macOS to request current Android camera and encoder capabilities.
-
-Example:
-
-    {
-      "version": 1,
-      "type": "getCapabilities",
-      "sequence": 2,
-      "timestamp": 12600
-    }
+Requests all current phone camera and encoder capabilities.
 
 ### capabilities
 
-Sent by Android in response to `getCapabilities`.
-
-Fields:
+Contains:
 
     cameras
     encoders
     defaultConfiguration
 
-Each camera entry may include:
+Each camera may contain:
 
     id
     name
     facing
     sensorOrientation
     flashAvailable
+    torchAvailable
+    zoomSupported
+    minimumZoom
+    maximumZoom
+    zoomRatios
     focusModes
+    exposureModes
+    exposureCompensationMinimum
+    exposureCompensationMaximum
+    exposureCompensationStep
     formats
 
-Each format entry includes:
+Each format contains:
 
     width
     height
     frameRates
 
-Each frame-rate entry may be:
+Frame rates may be fixed values or ranges.
 
-- a fixed value;
-- a minimum and maximum range.
-
-Each encoder entry may include:
+Each encoder may contain:
 
     name
     mimeType
     hardwareAccelerated
-    supportedWidths
-    supportedHeights
     bitrateRange
     frameRateRange
+    supportedWidths
+    supportedHeights
     colorFormats
 
-Example structure:
-
-    {
-      "version": 1,
-      "type": "capabilities",
-      "sequence": 3,
-      "timestamp": 12700,
-      "cameras": [
-        {
-          "id": "0",
-          "name": "Rear camera",
-          "facing": "back",
-          "sensorOrientation": 90,
-          "flashAvailable": true,
-          "focusModes": [
-            "auto",
-            "continuous-video"
-          ],
-          "formats": [
-            {
-              "width": 1920,
-              "height": 1080,
-              "frameRates": [
-                30
-              ]
-            }
-          ]
-        }
-      ],
-      "encoders": [
-        {
-          "name": "OMX.example.h264.encoder",
-          "mimeType": "video/avc",
-          "hardwareAccelerated": true
-        }
-      ]
-    }
-
-Android should expose only configurations that are reasonably expected to work with both the camera and encoder.
-
-The Mac must still handle configuration failure.
+Only camera and encoder combinations expected to be usable should be reported.
 
 ## Configuration
 
 ### configure
 
-Sent by macOS to select the Android capture configuration.
-
 Fields:
 
     cameraId
@@ -279,35 +174,17 @@ Fields:
     frameRate
     bitRate
     focusMode
+    exposureMode
+    exposureCompensation
     flashMode
+    zoom
     mirror
     orientationMode
     keyFrameInterval
 
-Example:
-
-    {
-      "version": 1,
-      "type": "configure",
-      "sequence": 4,
-      "timestamp": 13000,
-      "cameraId": "0",
-      "width": 1920,
-      "height": 1080,
-      "frameRate": 30,
-      "bitRate": 8000000,
-      "focusMode": "continuous-video",
-      "flashMode": "off",
-      "mirror": false,
-      "orientationMode": "display-upright",
-      "keyFrameInterval": 2
-    }
-
 ### configured
 
-Sent by Android after successful validation and configuration.
-
-Fields:
+Returns the final applied values:
 
     cameraId
     width
@@ -315,18 +192,17 @@ Fields:
     frameRate
     bitRate
     focusMode
+    exposureMode
+    exposureCompensation
     flashMode
+    zoom
     mirror
     rotation
     encoderName
 
-Android may adjust requested values to the nearest supported configuration.
-
-The final applied values must be returned explicitly.
+Android may adjust requested values only when the final values are reported explicitly.
 
 ### configurationRejected
-
-Sent when the requested configuration cannot be applied.
 
 Fields:
 
@@ -335,12 +211,14 @@ Fields:
     requestedConfiguration
     suggestedConfiguration
 
-Possible codes:
+Possible codes include:
 
     unknown_camera
     unsupported_resolution
     unsupported_frame_rate
+    unsupported_zoom
     unsupported_focus_mode
+    unsupported_exposure_mode
     unsupported_flash_mode
     encoder_unavailable
     encoder_configuration_failed
@@ -350,48 +228,34 @@ Possible codes:
 
 ### start
 
-Sent by macOS to start camera capture, encoding, and video transmission.
-
-Example:
-
-    {
-      "version": 1,
-      "type": "start",
-      "sequence": 5,
-      "timestamp": 13200
-    }
+Starts capture, encoding, and transmission.
 
 ### stop
 
-Sent by macOS to stop streaming while preserving the control connection.
-
-Example:
-
-    {
-      "version": 1,
-      "type": "stop",
-      "sequence": 6,
-      "timestamp": 18000
-    }
+Stops streaming while preserving the control session.
 
 ### requestKeyFrame
 
-Sent by macOS when the decoder requires a new H.264 key frame.
+Requests an immediate H.264 sync frame when supported.
 
-Example:
+## Zoom control
 
-    {
-      "version": 1,
-      "type": "requestKeyFrame",
-      "sequence": 7,
-      "timestamp": 18100
-    }
+### setZoom
 
-Android should request an immediate sync frame from the encoder when supported.
+Fields:
 
-## Runtime controls
+    zoom
 
-Runtime controls may be changed without fully rebuilding the connection when supported.
+Android clamps or rejects values outside the reported range.
+
+### zoomChanged
+
+Returns:
+
+    requestedZoom
+    appliedZoom
+
+## Focus control
 
 ### setFocusMode
 
@@ -401,7 +265,53 @@ Fields:
 
 ### triggerAutoFocus
 
-Requests a one-time autofocus operation.
+Starts a one-time autofocus operation.
+
+### setFocusPoint
+
+Optional fields:
+
+    x
+    y
+
+Coordinates are normalized from 0 to 1.
+
+The command is available only when the selected camera supports focus areas.
+
+### focusStatus
+
+Possible states:
+
+    idle
+    focusing
+    focused
+    failed
+    unsupported
+
+## Exposure control
+
+### setExposureMode
+
+Fields:
+
+    exposureMode
+
+### setExposureCompensation
+
+Fields:
+
+    value
+
+### setExposurePoint
+
+Optional normalized coordinates:
+
+    x
+    y
+
+Only reported capabilities may be requested.
+
+## Flashlight and flash control
 
 ### setFlashMode
 
@@ -409,13 +319,29 @@ Fields:
 
     flashMode
 
-Possible values may include:
+Possible values:
 
     off
     torch
     auto
+    on
 
-Only values reported in capabilities may be requested.
+The exact available values are reported by the camera.
+
+`torch` means continuous light while the camera is active.
+
+### flashStatus
+
+Fields:
+
+    requestedMode
+    appliedMode
+    available
+    message
+
+Failure to enable the torch is nonfatal unless camera capture also fails.
+
+## Bitrate control
 
 ### setBitRate
 
@@ -423,9 +349,11 @@ Fields:
 
     bitRate
 
-Android may apply the new bitrate dynamically when the encoder supports it.
+Android applies the value dynamically when supported.
 
-Otherwise, it may report that an encoder restart is required.
+Otherwise it responds that encoder restart is required.
+
+## Mirror control
 
 ### setMirror
 
@@ -433,18 +361,14 @@ Fields:
 
     mirror
 
-Mirroring may be applied:
+The response indicates whether mirroring is applied:
 
-- on Android before encoding;
-- on macOS during rendering.
+    onAndroid
+    onMac
 
-The selected implementation must be reported in status or configuration data.
-
-## Status messages
+## Status
 
 ### status
-
-Sent by Android whenever the state changes.
 
 Possible states:
 
@@ -458,41 +382,31 @@ Possible states:
     reconnecting
     failed
 
-Additional fields may include:
+Optional fields:
 
     cameraId
     width
     height
     frameRate
     bitRate
+    zoom
+    focusMode
+    flashMode
+    torchEnabled
     encodedFrames
     droppedFrames
     uptimeMilliseconds
     screenOn
+    activityVisible
+    foregroundServiceActive
     thermalState
     message
 
-Example:
-
-    {
-      "version": 1,
-      "type": "status",
-      "sequence": 8,
-      "timestamp": 14000,
-      "state": "streaming",
-      "width": 1920,
-      "height": 1080,
-      "frameRate": 30,
-      "bitRate": 8000000,
-      "encodedFrames": 120,
-      "droppedFrames": 2
-    }
+Recording state is not part of the Android status because recording is performed on the Mac.
 
 ## Keepalive
 
 ### ping
-
-May be sent by either endpoint.
 
 Fields:
 
@@ -500,21 +414,13 @@ Fields:
 
 ### pong
 
-Sent in response to `ping`.
-
 Fields:
 
     nonce
 
-The receiver should answer promptly.
-
-A missing response may trigger transport diagnostics and reconnection.
-
 ## Errors
 
 ### error
-
-Reports a recoverable or fatal error.
 
 Fields:
 
@@ -532,39 +438,33 @@ Possible codes include:
     camera_unavailable
     camera_disconnected
     camera_configuration_failed
+    zoom_failed
+    focus_failed
+    exposure_failed
+    flash_failed
+    torch_failed
     encoder_unavailable
     encoder_failed
     video_client_missing
     video_transport_failed
     internal_error
 
-Example:
-
-    {
-      "version": 1,
-      "type": "error",
-      "sequence": 9,
-      "timestamp": 14500,
-      "code": "encoder_failed",
-      "message": "The H.264 encoder stopped unexpectedly.",
-      "fatal": true,
-      "relatedSequence": 5
-    }
-
 ## Video transport
 
-The video connection carries binary packets.
-
-It must not contain JSON or newline framing.
+The video connection contains binary packets.
 
 Each packet consists of:
 
 1. a fixed-size header;
-2. a payload with the exact declared length.
+2. a payload.
 
-## Video packet header
+Maximum recommended payload size:
 
-The initial header layout is:
+    32 MiB
+
+## Video header
+
+Header layout:
 
     magic                   4 bytes
     protocolVersion         1 byte
@@ -575,62 +475,45 @@ The initial header layout is:
     decodingTimestamp       8 bytes
     payloadLength           4 bytes
 
-Total header size:
+Total:
 
     36 bytes
 
-All multi-byte integer fields use network byte order.
+All multi-byte integers use network byte order.
 
-## Video packet magic
+## Magic value
 
-The magic value is:
+ASCII:
 
     WBCM
 
-In bytes:
+Bytes:
 
     0x57 0x42 0x43 0x4D
 
-Packets with an invalid magic value must be rejected.
-
-## Video packet types
+## Packet types
 
 ### codecConfiguration
 
-Contains H.264 decoder configuration.
+Contains H.264 SPS and PPS information required by VideoToolbox.
 
-The payload contains the codec-specific data required to build the VideoToolbox format description.
+Sent:
 
-It must include valid SPS and PPS information.
-
-Codec configuration is sent:
-
-- before the first decodable frame;
+- before the first frame;
 - after encoder restart;
 - after resolution change;
-- after codec configuration change;
+- after codec change;
 - after video reconnection.
 
 ### videoFrame
 
-Contains one encoded access unit.
-
-Flags identify whether the frame is:
-
-- a key frame;
-- a regular frame;
-- discardable;
-- the final packet before shutdown.
+Contains one encoded H.264 access unit.
 
 ### endOfStream
 
-Signals an intentional stream end.
+Marks an intentional stream end.
 
-Its payload may be empty.
-
-## Video packet flags
-
-Initial flags:
+## Flags
 
     0x0001  key frame
     0x0002  codec configuration
@@ -638,165 +521,119 @@ Initial flags:
     0x0008  discontinuity
     0x0010  corrupted or incomplete
 
-Unknown flags must be ignored unless they affect safe parsing.
-
-## H.264 representation
-
-The Android sender and macOS receiver must agree on the H.264 payload representation.
+## H.264 format
 
 The initial protocol uses length-prefixed NAL units suitable for VideoToolbox.
 
-If the Android encoder returns Annex B start codes, Android converts them before transmission or clearly identifies the representation in codec configuration metadata.
+Android converts Annex B output when required.
 
-The stream must not mix Annex B and length-prefixed frames without a decoder reset.
+A stream must not mix representations without sending a discontinuity and new codec configuration.
 
 ## Timestamps
 
-Video timestamps use microseconds.
+Video timestamps use microseconds and a monotonic session-local origin.
 
-The timestamp origin is monotonic and local to the Android streaming session.
-
-The Mac uses timestamps for:
+The Mac uses them for:
 
 - frame ordering;
-- latency estimation;
-- preview scheduling;
-- stream statistics.
-
-The Mac must not treat them as wall-clock timestamps.
-
-## Sequence numbers
-
-Video packets use a continuously increasing sequence number.
-
-A gap may indicate:
-
-- dropped packets before transmission;
-- encoder output loss;
-- sender restart;
-- connection reset.
-
-Because TCP is reliable, missing sequence numbers usually indicate sender-side dropping or a new session.
-
-## Payload limits
-
-The receiver must enforce safe limits.
-
-Recommended initial maximum values:
-
-    Control message: 1 MiB
-    Video packet:    32 MiB
-
-Payload lengths larger than the configured maximum must terminate the video session.
-
-## Reconfiguration
-
-Changing any of these values requires an encoder restart:
-
-    camera
-    width
-    height
-    frame rate
-    encoder
-    color format
-
-The expected sequence is:
-
-1. Mac sends `stop`.
-2. Android sends `status: stopping`.
-3. Android sends an `endOfStream` packet.
-4. Android releases camera and encoder resources.
-5. Mac sends `configure`.
-6. Android sends `configured`.
-7. Mac sends `start`.
-8. Android sends new codec configuration.
-9. Android resumes video frames.
-
-Controls such as focus, flash, mirror, or bitrate may be applied without restart when supported.
-
-## Screen-off operation
-
-Android may continue streaming while the activity is not visible or the screen is off.
-
-The control channel may report:
-
-    screenOn
-    activityVisible
-    foregroundServiceActive
-
-The Mac should not treat screen-off state as a stream failure.
-
-Actual behavior depends on Android firmware.
+- preview timing;
+- recording timing;
+- latency statistics.
 
 ## Multiple Android devices
 
-The protocol supports one control and one video session per Android device.
+Each Android device has separate:
 
-The macOS application may manage multiple Android devices simultaneously, but each device uses:
-
-- its own ADB serial;
-- its own forwarding rules;
-- its own local Mac ports;
-- its own control session;
-- its own video session;
-- its own decoder state.
-
-Only one source needs to be displayed in the main preview at a time.
-
-Inactive Android sources may remain disconnected or stopped.
-
-## Local macOS cameras
-
-Built-in and USB cameras discovered through AVFoundation do not use this protocol.
-
-Their capabilities come directly from `AVCaptureDevice`.
-
-The common macOS source model converts both local cameras and Android cameras into the same application-level representation:
-
+    ADB serial
+    local Mac ports
+    control session
+    video session
+    decoder
     source identifier
-    source name
-    formats
-    frame rates
-    controls
-    frame stream
-    status
+    preview
+    recording writer
 
-## Compatibility rules
+The same Android ports are reused on each phone because ADB forwarding maps them to different Mac ports.
 
-A receiver should:
+## Multiple simultaneous sources
+
+The protocol itself manages one stream per Android device.
+
+The macOS application combines several protocol sessions with local camera sources.
+
+No Android source is aware of other active cameras.
+
+Stopping or reconfiguring one source must not modify another source.
+
+## Recording behavior
+
+Recording commands are not sent to Android.
+
+The Mac records frames received from the Android source.
+
+This keeps recording location, file format, naming, and simultaneous recording under macOS control.
+
+Protocol timestamps must remain stable enough for Mac-side recording.
+
+## Reconfiguration
+
+Changes requiring restart include:
+
+    selected phone camera
+    resolution
+    frame rate
+    encoder
+    encoder color format
+
+Expected sequence:
+
+1. Mac sends `stop`.
+2. Android reports `stopping`.
+3. Android sends `endOfStream`.
+4. Android releases capture resources.
+5. Mac sends `configure`.
+6. Android sends `configured`.
+7. Mac sends `start`.
+8. Android sends codec configuration.
+9. Android resumes frames.
+
+Zoom, focus, exposure, flash, torch, mirror, and bitrate may be runtime controls when supported.
+
+## Compatibility
+
+Receivers should:
 
 - ignore unknown optional JSON fields;
 - reject unsupported protocol versions;
-- reject unknown required packet structures;
-- preserve compatibility with added optional controls;
-- report meaningful errors instead of silently disconnecting.
-
-New message types should be optional unless introduced by a new protocol version.
+- reject unsafe packet sizes;
+- preserve unknown optional flags;
+- report meaningful errors;
+- avoid silent fallback to unrelated settings.
 
 ## Security
 
-The Android servers bind only to the loopback interface.
+Android servers bind only to loopback.
 
-The protocol is transported through ADB forwarding over USB.
+The Mac reaches them through ADB forwarding.
 
-The initial version does not include encryption or authentication.
-
-The Mac must connect only to ports created for the selected ADB device.
+The initial protocol does not use encryption or authentication.
 
 ## Diagnostics
 
 Implementations should log:
 
-- connection creation;
-- selected ADB serial;
-- forwarding ports;
-- protocol version;
-- selected camera configuration;
-- encoder name;
-- codec configuration receipt;
+- ADB serial;
+- local and Android ports;
+- selected camera;
+- selected resolution and FPS;
+- selected encoder;
+- zoom changes;
+- focus changes;
+- torch changes;
+- codec configuration;
 - first decoded frame;
-- dropped frames;
-- reconnect attempts;
-- errors and state transitions.
+- frame drops;
+- transport recovery;
+- errors.
 
-Logs must not include private user content or raw frame data.
+Logs must not contain raw camera frames.
