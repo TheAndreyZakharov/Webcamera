@@ -1,0 +1,76 @@
+plugins {
+    id "com.android.application"
+}
+
+android {
+    namespace "com.theandreyzakharov.webcamera"
+
+    compileSdk 35
+
+    defaultConfig {
+        applicationId "com.theandreyzakharov.webcamera"
+
+        minSdk 22
+        targetSdk 35
+
+        versionCode 1
+        versionName "1.0.0"
+
+        testInstrumentationRunner(
+            "android.test.InstrumentationTestRunner"
+        )
+    }
+
+    buildFeatures {
+        buildConfig true
+    }
+
+    compileOptions {
+        sourceCompatibility JavaVersion.VERSION_17
+        targetCompatibility JavaVersion.VERSION_17
+    }
+
+    buildTypes {
+        debug {
+            applicationIdSuffix ".debug"
+            versionNameSuffix "-debug"
+
+            debuggable true
+            minifyEnabled false
+        }
+
+        release {
+            debuggable false
+            minifyEnabled true
+            shrinkResources true
+
+            proguardFiles(
+                getDefaultProguardFile(
+                    "proguard-android-optimize.txt"
+                ),
+                "proguard-rules.pro"
+            )
+        }
+    }
+
+    packaging {
+        resources {
+            excludes += [
+                "META-INF/DEPENDENCIES",
+                "META-INF/LICENSE",
+                "META-INF/LICENSE.txt",
+                "META-INF/NOTICE",
+                "META-INF/NOTICE.txt"
+            ]
+        }
+    }
+
+    lint {
+        abortOnError true
+        checkReleaseBuilds true
+        warningsAsErrors false
+    }
+}
+
+dependencies {
+}
