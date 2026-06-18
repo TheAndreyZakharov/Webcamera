@@ -107,6 +107,15 @@ public final class VideoEncoder {
                 audioStarted =
                     audioCodec != null
                         && audioRecord != null;
+                        Log.i(
+                            TAG,
+                            "Phone audio initialized: "
+                                + audioStarted
+                                + ", requested="
+                                + audioEnabled
+                                + ", bitrate="
+                                + audioBitRate
+                        );
             } catch (Exception exception) {
                 Log.e(
                     TAG,
@@ -1196,6 +1205,11 @@ public final class VideoEncoder {
             return;
         }
 
+        Log.i(
+            TAG,
+            "AAC drain thread started"
+        );
+
         MediaCodec.BufferInfo info =
             new MediaCodec.BufferInfo();
 
@@ -1354,6 +1368,11 @@ public final class VideoEncoder {
 
             return;
         }
+
+        Log.i(
+            TAG,
+            "Phone microphone recording started"
+        );
 
         ByteBuffer[] inputBuffers =
             codec.getInputBuffers();

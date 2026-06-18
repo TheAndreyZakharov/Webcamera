@@ -1,777 +1,1100 @@
-# Development Guide
+# Webcamera Development Guide
 
 ## Repository
 
 Clone the repository:
 
-    git clone https://github.com/TheAndreyZakharov/Webcamera.git
-    cd Webcamera
-    code .
+```bash
+git clone https://github.com/TheAndreyZakharov/Webcamera.git
+cd Webcamera
+```
 
-## Current project status
+Open it in Visual Studio Code:
 
-The macOS application is the currently implemented part of Webcamera.
+```bash
+code .
+```
 
-It already supports:
+The macOS Xcode project is located at:
 
-- discovery of local AVFoundation cameras;
-- built-in and external camera sources;
-- simultaneous multi-camera preview;
-- independent camera selection;
-- per-camera resolution and frame-rate selection;
-- independent capture sessions;
-- individual camera preview windows;
-- independent microphone selection;
-- live microphone monitoring;
-- left and right audio level meters;
-- optional mono monitoring;
-- optional mono recording;
-- independent recording;
-- record-all and stop-all actions;
-- per-camera MOV or MP4 selection;
-- a global default recording format;
-- recording destination selection;
-- safe preview-layer and capture-session synchronization;
-- delayed capture-session teardown;
-- MP4 export with temporary MOV recovery.
+```text
+macos-app/Webcamera/Webcamera.xcodeproj
+```
 
-The next major development stage is the Android application.
+The Android Gradle project is located at:
 
-The Android application will have a deliberately limited first scope:
+```text
+android-app/
+```
 
-- connect an Android phone to the Mac through USB and ADB;
-- capture video from the selected phone camera;
-- encode the video as H.264;
-- stream it to the macOS application;
-- make the phone appear as another camera source.
+---
 
-Recording remains on the Mac.
+# Current implementation status
 
-## Target devices
+The project currently contains working implementations for both macOS and Android integration.
 
-Primary Android device:
-
-    Meizu MX5
-    Android 5.1
-    API 22
-    Flyme 6.2.0.0G
-
-Primary Mac:
-
-    MacBook Air with Apple Silicon
-    macOS
-
-## macOS functional requirements
-
-The macOS application supports or is expected to preserve:
-
-- discovery of cameras visible to AVFoundation;
-- simultaneous preview of several selected cameras;
-- independent source selection;
-- per-camera resolution and FPS selection;
-- independent start and stop controls;
-- independent microphone selection;
-- live microphone monitoring;
-- stereo audio meters;
-- per-camera mono monitoring;
-- per-camera mono recording;
-- recording from one camera;
-- simultaneous recording from several cameras;
-- per-camera MOV or MP4 output;
-- a global default output format;
-- user-selected recording destination;
-- separate recording files for every camera;
-- source-specific status and error reporting;
-- safe camera removal and session teardown;
-- connected Android phones as additional video sources.
-
-## Android first-version requirements
-
-The first Android application must support:
-
-- Android camera permission;
-- discovery of front and rear cameras;
-- selection of one phone camera;
-- selection of a stable supported video configuration;
-- camera capture;
-- H.264 encoding through `MediaCodec`;
-- a local control server;
-- a local video server;
-- ADB USB port forwarding;
-- start and stop streaming;
-- basic connection status;
-- basic encoder and camera error reporting;
-- foreground-service operation when required;
-- reconnection after the Mac reconnects.
-
-The first Android version does not need:
-
-- phone-side video recording;
-- audio streaming;
-- remote zoom controls;
-- remote focus controls;
-- remote exposure controls;
-- remote torch controls;
-- multiple simultaneous phone cameras;
-- editing or media management;
-- Wi-Fi transport;
-- a virtual-camera driver.
-
-These features may be evaluated later without expanding the initial Android milestone.
-
-## Supported source types
+## macOS local camera support
 
 The macOS application supports:
 
-- the built-in Mac camera;
-- USB cameras recognized by macOS;
-- virtual or other AVFoundation video devices;
-- Android Webcamera sources over ADB and USB after the Android application is implemented.
+- built-in Mac cameras;
+- external USB cameras;
+- virtual AVFoundation cameras;
+- simultaneous preview of selected cameras;
+- independent local camera controllers;
+- per-camera resolution and frame-rate selection;
+- per-camera microphone selection;
+- live audio monitoring;
+- left and right audio meters;
+- mono recording;
+- MOV recording;
+- MP4 conversion;
+- separate preview windows;
+- record-all and stop-all actions.
 
-Old iPhones are not part of the project.
+## Android camera support
 
-## Required tools
+The macOS application also supports:
 
-- Git
-- Visual Studio Code
-- Xcode
-- Swift
-- Java 17
-- Gradle
-- Android SDK
-- Android SDK Platform Tools
-- ADB
-- FFmpeg
+- ADB device discovery;
+- starting the Android activity and service;
+- ADB port forwarding;
+- Android control connection;
+- Android media connection;
+- front and rear phone-camera selection;
+- Android stream resolution selection;
+- H.264 video decoding through VideoToolbox;
+- Android torch control;
+- phone microphone AAC reception;
+- Android recording on macOS;
+- recording Android video with the phone microphone;
+- recording Android video with a macOS microphone;
+- recording Android video without audio;
+- MOV and MP4 output;
+- independent Android recording state.
 
-## Environment verification
+---
+
+# Primary target systems
+
+## macOS development machine
+
+The macOS application is developed for:
+
+```text
+macOS
+Apple Silicon
+Xcode
+Swift
+```
+
+The current build examples use:
+
+```text
+arm64
+```
+
+## Android target
+
+The primary compatibility target is:
+
+```text
+Meizu MX5
+Android 5.1
+API 22
+Flyme 6.2.0.0G
+```
+
+The Android implementation must remain compatible with API 22.
+
+---
+
+# Required tools
+
+Required macOS development tools:
+
+- Git;
+- Xcode;
+- Xcode Command Line Tools;
+- Swift;
+- Bash;
+- ADB;
+- Android SDK Platform Tools.
+
+Required Android development tools:
+
+- Java 17;
+- Android SDK;
+- Gradle wrapper;
+- ADB.
+
+Recommended diagnostic tools:
+
+- FFmpeg;
+- FFprobe;
+- FFplay;
+- Visual Studio Code.
+
+A globally installed `gradle` executable is optional because the Android project should use:
+
+```text
+android-app/gradlew
+```
+
+---
+
+# Environment check
 
 Run:
 
-    ./scripts/check-environment.sh
+```bash
+./scripts/check-environment.sh
+```
 
-The script should verify the tools required by the current development stage.
+The environment script checks:
 
-## macOS development
+- operating system;
+- processor architecture;
+- Git;
+- Xcode;
+- Swift;
+- Java;
+- Android SDK;
+- ADB;
+- FFmpeg;
+- project files.
 
-macOS project:
+The script reports optional tools without failing unnecessarily.
 
-    macos-app/Webcamera/Webcamera.xcodeproj
+---
 
-The application is a normal windowed macOS application.
+# Important paths
 
-Xcode is used for:
+```text
+macos-app/Webcamera/Webcamera.xcodeproj
+macos-app/Webcamera/Webcamera/
+android-app/
+shared/protocol/protocol.md
+docs/
+scripts/
+release/
+```
 
-- application-target configuration;
-- Swift compilation;
-- application bundle generation;
-- asset catalogs;
-- framework linking;
-- local signing;
-- release builds.
+Important macOS source files:
 
-Swift source may also be edited in Visual Studio Code.
+```text
+macos-app/Webcamera/Webcamera/App/AppState.swift
+macos-app/Webcamera/Webcamera/App/WebcameraApp.swift
 
-## macOS frameworks
+macos-app/Webcamera/Webcamera/CameraControl/CameraController.swift
+macos-app/Webcamera/Webcamera/CameraControl/AndroidCameraController.swift
 
-The macOS application uses:
+macos-app/Webcamera/Webcamera/Decoder/H264Decoder.swift
 
-- SwiftUI;
-- AppKit;
-- AVFoundation;
-- AVFAudio;
-- AudioToolbox;
-- Core Media;
-- Core Video;
-- VideoToolbox;
-- Combine;
-- Foundation.
+macos-app/Webcamera/Webcamera/Models/CameraDeviceInfo.swift
+macos-app/Webcamera/Webcamera/Models/VideoFormat.swift
 
-Network and process-management APIs are used or will be used for Android transport.
+macos-app/Webcamera/Webcamera/Preview/VideoPreviewView.swift
 
-## Local signing
+macos-app/Webcamera/Webcamera/Recording/AndroidRecorder.swift
 
-A paid Apple Developer Program membership is not required to build and run the application on the development Mac.
+macos-app/Webcamera/Webcamera/Transport/ADBController.swift
+macos-app/Webcamera/Webcamera/Transport/ControlConnection.swift
+macos-app/Webcamera/Webcamera/Transport/VideoConnection.swift
 
-Developer ID signing and notarization are required only for polished public distribution without normal Gatekeeper warnings.
+macos-app/Webcamera/Webcamera/UI/ContentView.swift
+macos-app/Webcamera/Webcamera/UI/SettingsView.swift
+```
 
-The current application does not contain a macOS Camera Extension.
+---
 
-## macOS project structure
+# Source responsibilities
 
-Important source responsibilities include:
+## AppState
 
-    AppState
-        application-level camera, audio, recording, and selection state
+`AppState` owns application-wide state.
 
-    CameraDeviceInfo
-        discovered camera and microphone models
+It is responsible for:
 
-    VideoFormat
-        source-specific resolution and frame-rate configurations
+- permissions;
+- camera discovery;
+- Android discovery;
+- camera selection;
+- controller creation;
+- controller removal;
+- video-format selection;
+- audio-device selection;
+- recording-format selection;
+- mono settings;
+- global recording actions;
+- global settings application.
 
-    CameraController
-        AVFoundation session, recording, audio monitoring, and meters
+Do not place camera capture or transport implementation directly in `AppState`.
 
-    VideoPreviewView
-        AppKit preview layer and capture-session synchronization
+---
 
-    ContentView
-        camera sidebar, grid, tiles, controls, and preview windows
+## CameraController
 
-    SettingsView
-        recording destination and global recording defaults
+`CameraController` handles local AVFoundation cameras.
 
-    H264Decoder
-        VideoToolbox decoding support for future Android sources
+It owns:
 
-Capture and transport logic must not be implemented directly inside SwiftUI views.
+- one capture session;
+- camera and microphone inputs;
+- movie recording;
+- live audio monitoring;
+- audio meters;
+- mono conversion;
+- local camera errors.
 
-## macOS build
+---
+
+## AndroidCameraController
+
+`AndroidCameraController` handles one Android phone source.
+
+It owns:
+
+- ADB preparation;
+- control transport;
+- media transport;
+- phone camera capabilities;
+- selected phone camera;
+- selected Android stream format;
+- torch state;
+- decoded frames;
+- phone audio availability;
+- Android recording state.
+
+---
+
+## AndroidRecorder
+
+`AndroidRecorder` writes Android recordings on the Mac.
+
+It accepts:
+
+- decoded Android video frames;
+- compressed phone AAC packets;
+- or audio from a selected macOS microphone.
+
+It writes one MOV or MP4 file per Android source.
+
+---
+
+## H264Decoder
+
+`H264Decoder`:
+
+- parses Annex B SPS and PPS;
+- creates a VideoToolbox format description;
+- converts Annex B frames to AVCC;
+- creates sample buffers;
+- decodes H.264 asynchronously;
+- returns `CVPixelBuffer` frames.
+
+---
+
+## ControlConnection
+
+`ControlConnection` provides newline-delimited JSON transport.
+
+It must remain independent from the binary media transport.
+
+---
+
+## VideoConnection
+
+`VideoConnection` parses the binary Android media protocol.
+
+The class name is historical: the connection carries video and audio packets.
+
+It supports:
+
+```text
+videoConfiguration
+videoFrame
+audioConfiguration
+audioFrame
+endOfStream
+```
+
+---
+
+## ContentView
+
+`ContentView` displays:
+
+- the camera sidebar;
+- global controls;
+- local camera tiles;
+- Android camera tiles;
+- preview windows.
+
+Capture and transport logic must not be implemented inside SwiftUI views.
+
+---
+
+# macOS permissions
+
+The application requires camera permission for local AVFoundation cameras.
+
+It requires microphone permission when using a macOS microphone.
+
+Phone microphone audio received from Android does not require macOS microphone permission.
+
+Required application usage descriptions should exist in the macOS target configuration:
+
+```text
+NSCameraUsageDescription
+NSMicrophoneUsageDescription
+```
+
+When access is denied, the application can open the corresponding Privacy & Security settings page.
+
+---
+
+# Building the macOS application
 
 From the repository root:
 
-    swift format --in-place macos-app/Webcamera/Webcamera/App/AppState.swift macos-app/Webcamera/Webcamera/CameraControl/CameraController.swift macos-app/Webcamera/Webcamera/Models/CameraDeviceInfo.swift macos-app/Webcamera/Webcamera/Models/VideoFormat.swift macos-app/Webcamera/Webcamera/Preview/VideoPreviewView.swift macos-app/Webcamera/Webcamera/UI/ContentView.swift macos-app/Webcamera/Webcamera/UI/SettingsView.swift
+```bash
+./scripts/run-macos.sh
+```
 
-Clean old derived data:
+This script:
 
-    rm -rf macos-app/DerivedData
+1. checks the Xcode project;
+2. removes the previous script-derived build directory;
+3. builds the Debug configuration;
+4. verifies the application bundle;
+5. launches the application.
+
+---
+
+## Manual macOS build
+
+From the repository root:
+
+```bash
+rm -rf /tmp/WebcameraDerivedData
+```
 
 Build:
 
-    xcodebuild -project macos-app/Webcamera/Webcamera.xcodeproj -scheme Webcamera -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath macos-app/DerivedData CODE_SIGNING_ALLOWED=NO clean build
+```bash
+xcodebuild \
+  -project macos-app/Webcamera/Webcamera.xcodeproj \
+  -scheme Webcamera \
+  -configuration Debug \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath /tmp/WebcameraDerivedData \
+  CODE_SIGNING_ALLOWED=NO \
+  clean build
+```
 
-Generated application:
+Application bundle:
 
-    macos-app/DerivedData/Build/Products/Debug/Webcamera.app
+```text
+/tmp/WebcameraDerivedData/Build/Products/Debug/Webcamera.app
+```
 
-Run:
+Launch:
 
-    open macos-app/DerivedData/Build/Products/Debug/Webcamera.app
+```bash
+open /tmp/WebcameraDerivedData/Build/Products/Debug/Webcamera.app
+```
 
-## Build diagnostics
+---
 
-Store the complete build output:
+# Build diagnostics
 
-    xcodebuild -project macos-app/Webcamera/Webcamera.xcodeproj -scheme Webcamera -configuration Debug -destination 'platform=macOS,arch=arm64' -derivedDataPath macos-app/DerivedData CODE_SIGNING_ALLOWED=NO clean build 2>&1 | tee /tmp/webcamera-build.log
+Capture the full build log:
 
-Show errors:
+```bash
+rm -rf /tmp/WebcameraDerivedData
 
-    grep -n "error:" /tmp/webcamera-build.log | head -n 100
+xcodebuild \
+  -project macos-app/Webcamera/Webcamera.xcodeproj \
+  -scheme Webcamera \
+  -configuration Debug \
+  -destination 'platform=macOS,arch=arm64' \
+  -derivedDataPath /tmp/WebcameraDerivedData \
+  CODE_SIGNING_ALLOWED=NO \
+  clean build \
+  2>&1 | tee /tmp/webcamera-macos-build.log
+```
+
+Show compiler errors:
+
+```bash
+grep -nE \
+  "error:|BUILD FAILED|SwiftCompile.*failed" \
+  /tmp/webcamera-macos-build.log |
+  head -n 150
+```
 
 Show warnings:
 
-    grep -n "warning:" /tmp/webcamera-build.log | head -n 100
+```bash
+grep -n "warning:" \
+  /tmp/webcamera-macos-build.log |
+  head -n 150
+```
 
-Show the final build lines:
+Show final output:
 
-    tail -n 30 /tmp/webcamera-build.log
+```bash
+tail -n 40 /tmp/webcamera-macos-build.log
+```
 
-Verify the application executable:
+Verify the executable:
 
-    file macos-app/DerivedData/Build/Products/Debug/Webcamera.app/Contents/MacOS/Webcamera
+```bash
+file \
+  /tmp/WebcameraDerivedData/Build/Products/Debug/Webcamera.app/Contents/MacOS/Webcamera
+```
 
-## Local camera discovery
+---
 
-Local cameras are discovered through `AVCaptureDevice.DiscoverySession`.
+# Swift formatting
 
-For each camera, Webcamera reads:
+Format all macOS Swift sources:
 
-- unique identifier;
-- localized name;
-- device type;
-- supported AVFoundation formats;
-- supported frame-rate ranges;
-- media subtype.
+```bash
+find macos-app/Webcamera/Webcamera \
+  -name '*.swift' \
+  -print0 |
+  xargs -0 swift format --in-place
+```
 
-Only configurations reported by the camera are displayed.
+Check formatting without changing files:
 
-The current implementation does not assume that every external camera supports manual focus, exposure, or zoom controls.
+```bash
+find macos-app/Webcamera/Webcamera \
+  -name '*.swift' \
+  -print0 |
+  xargs -0 swift format lint
+```
 
-## Camera selection
+Review formatting changes before committing:
 
-The sidebar displays cameras visible to AVFoundation.
+```bash
+git diff --check
+git diff
+```
 
-The user can:
+---
 
-- enable several cameras;
-- disable a camera;
-- refresh camera discovery;
-- run one camera;
-- run all selected cameras;
-- stop one camera;
-- stop all cameras.
+# Local camera development
 
-Every selected camera receives an independent controller.
+## Discovery
 
-## Capture-session safety
+Local cameras are discovered using:
 
-All operations that mutate an `AVCaptureSession` graph must use the shared per-session gate.
+```swift
+AVCaptureDevice.DiscoverySession
+```
+
+Do not hardcode local device identifiers.
+
+Only show formats actually reported by AVFoundation.
+
+---
+
+## Controller ownership
+
+Every selected local camera receives its own `CameraController`.
+
+Do not share one `AVCaptureSession` between different camera devices.
+
+Do not store capture-session implementation in SwiftUI views.
+
+---
+
+## Session graph safety
+
+Any operation that can mutate an `AVCaptureSession` graph must use `CaptureSessionGate`.
 
 This includes:
 
-- starting a session;
-- stopping a session;
-- beginning and committing configuration;
-- adding and removing inputs;
-- adding and removing outputs;
+- `startRunning()`;
+- `stopRunning()`;
+- `beginConfiguration()`;
+- `commitConfiguration()`;
+- adding inputs;
+- removing inputs;
+- adding outputs;
+- removing outputs;
 - attaching a preview layer;
 - detaching a preview layer.
 
-Do not modify the same capture session simultaneously from:
+Never modify the same session graph concurrently from the main thread and a capture queue.
 
-- the capture queue;
-- the main thread;
-- an AppKit preview view;
-- SwiftUI dismantling callbacks.
+---
 
-When removing a camera tile:
+## Camera removal
 
-1. remove the camera from the selected set;
-2. allow SwiftUI to dismantle the preview;
-3. detach the preview layer;
-4. wait for the UI transaction;
-5. stop and clear the controller.
+When a local camera is deselected:
 
-## Resolution and frame-rate selection
+1. remove it from `selectedCameraIDs`;
+2. allow SwiftUI to remove its tile;
+3. allow `VideoPreviewView` to detach;
+4. wait for the teardown delay;
+5. clear the controller;
+6. remove its stored selections.
 
-Video configurations are camera-specific.
+Do not remove the controller immediately before preview detachment.
 
-Displayed values combine:
+---
 
-- width;
-- height;
-- frame rate.
+# Local audio development
 
-Examples:
+## Audio selection
 
-    1920 × 1080 · 30 FPS
-    1280 × 720 · 60 FPS
+Local camera microphone choices come from AVFoundation.
 
-Changing a format may rebuild and restart the capture session.
+Changing the selected microphone rebuilds the local capture session.
 
-Format selection is disabled while the camera is recording.
+Do not attempt to assign `Phone Microphone` to a local camera.
 
-## Microphone selection
+---
 
-Microphones are discovered independently from cameras.
+## Live monitoring
 
-Every camera tile can select:
+Local monitoring uses:
 
-- No Audio;
-- a camera microphone;
-- the built-in microphone;
-- an external microphone;
-- an audio-interface device visible through AVFoundation.
+```text
+AVCaptureAudioDataOutput
+AVAudioPCMBuffer
+AVAudioConverter
+AVAudioPlayerNode
+AVAudioEngine
+```
 
-Microphone permission must be granted before an audio device can be used.
+Monitoring must not run on the main thread.
 
-Changing a microphone may rebuild the camera capture session.
+Use headphones during testing.
 
-## Live audio monitoring
-
-Live monitoring uses:
-
-    AVCaptureAudioDataOutput
-        ↓
-    CMSampleBuffer
-        ↓
-    AVAudioPCMBuffer
-        ↓
-    AVAudioConverter
-        ↓
-    AVAudioPlayerNode
-        ↓
-    AVAudioEngine
-
-Every camera controller owns an independent audio-processing queue.
-
-The monitoring button affects only the selected camera.
-
-Monitoring is automatically stopped when:
-
-- the camera stops;
-- the controller is removed;
-- the audio input disappears;
-- the session is reconfigured unsuccessfully.
+---
 
 ## Audio meters
 
-Audio meters are calculated from PCM samples.
+Meters are derived from PCM RMS levels.
 
-The implementation calculates the RMS value for every channel and maps it to a normalized interface value.
+Do not calculate meters from encoded recording output.
 
-The left and right meters should update without blocking the capture-session queue or main thread.
+Meter state is UI-only and must not block recording.
 
-When mono mode is enabled, both meters show the same resulting mono signal.
+---
 
-## Mono behavior
+# Android development
 
-Mono is configured per camera.
+## ADB environment
 
-When enabled:
+Recommended SDK path:
 
-- monitoring converts the source audio into one channel;
-- `AVAudioEngine` distributes the one-channel signal to both output speakers;
-- movie output requests a one-channel AAC recording;
-- the UI displays matching left and right meter levels.
+```text
+~/Library/Android/sdk
+```
 
-Changing mono mode while recording is not allowed.
+Recommended shell variables:
 
-The live monitoring graph is rebuilt when the channel configuration changes.
-
-## Recording
-
-Every local camera controller owns one `AVCaptureMovieFileOutput`.
-
-The application supports:
-
-- recording one camera;
-- recording several cameras simultaneously;
-- stopping one recording;
-- stopping all recordings;
-- unique filenames;
-- optional audio;
-- mono or stereo audio;
-- per-camera MOV or MP4 output.
-
-Every camera writes its own file.
-
-## Recording formats
-
-MOV is captured directly.
-
-MP4 uses:
-
-    AVCaptureMovieFileOutput
-        ↓
-    temporary MOV
-        ↓
-    AVAssetExportSession
-        ↓
-    final MP4
-
-The temporary MOV is deleted after a successful MP4 export.
-
-If export fails, the temporary MOV remains available and its location is reported.
-
-## Per-camera and global formats
-
-Every camera can select its own file format.
-
-Settings also contains a global file-format selection.
-
-The global value acts as:
-
-- the default for newly selected cameras;
-- the common format when the user intentionally applies one format to all cameras.
-
-A camera-specific selection overrides the global default for that camera.
-
-## Recording destination
-
-The destination is selected through an `NSOpenPanel` configured for directories.
-
-The default destination is Downloads.
-
-The path is currently stored in `UserDefaults`.
-
-If sandboxing is enabled later, the project should use a security-scoped bookmark.
-
-## Recording diagnostics
-
-Inspect a MOV recording:
-
-    ffprobe recording.mov
-
-Inspect an MP4 recording:
-
-    ffprobe recording.mp4
-
-Play a recording:
-
-    ffplay recording.mov
-
-Diagnostic recordings must not be committed.
-
-## Android environment
-
-Expected Android SDK location:
-
-    ~/Library/Android/sdk
-
-Recommended variables:
-
-    ANDROID_HOME=~/Library/Android/sdk
-    ADB_LIBUSB=0
+```bash
+export ANDROID_HOME="$HOME/Library/Android/sdk"
+export ANDROID_SDK_ROOT="$ANDROID_HOME"
+export PATH="$ANDROID_HOME/platform-tools:$PATH"
+export ADB_LIBUSB=0
+```
 
 Verify ADB:
 
-    ADB_LIBUSB=0 adb version
+```bash
+ADB_LIBUSB=0 adb version
+```
 
-List connected devices:
+List devices:
 
-    ADB_LIBUSB=0 adb devices -l
+```bash
+ADB_LIBUSB=0 adb devices -l
+```
 
-## USB transport verification
+A usable device must appear with state:
 
-Connect the Android phone with:
+```text
+device
+```
 
-- USB data enabled;
-- USB debugging enabled;
-- the development Mac authorized.
+Not:
 
-Run:
+```text
+offline
+unauthorized
+```
 
-    ./scripts/test-usb-transport.sh
+---
 
-The test should verify:
+## Android build
 
-- ADB availability;
-- at least one online Android device;
-- shell access;
-- port-forwarding support;
-- stable device serial detection.
+Build the debug APK:
 
-## Android project
-
-Android project directory:
-
-    android-app/
-
-Primary language:
-
-    Java
-
-Minimum API:
-
-    API 22
-
-Build:
-
-    cd android-app
-    ./gradlew clean assembleDebug
+```bash
+cd android-app
+chmod +x gradlew
+./gradlew clean assembleDebug
+```
 
 Generated APK:
 
-    android-app/app/build/outputs/apk/debug/app-debug.apk
+```text
+android-app/app/build/outputs/apk/debug/app-debug.apk
+```
 
-Install:
+---
 
-    cd ../..
-    ./scripts/install-android.sh
+## Install Android application
 
-Read application logs:
+From the repository root:
 
-    ADB_LIBUSB=0 adb logcat -d | grep -i Webcamera
+```bash
+./scripts/install-android.sh
+```
 
-## Android implementation strategy
+For multiple connected devices, provide the serial:
 
-The first Android implementation should remain small.
+```bash
+./scripts/install-android.sh DEVICE_SERIAL
+```
 
-Suggested components:
+---
 
-    MainActivity
-        permissions, camera selection, status, and service controls
+## Android logs
 
-    CameraStreamingService
-        foreground service and runtime ownership
+Clear existing logs:
 
-    CameraController
-        legacy Camera or Camera2 capture
+```bash
+ADB_LIBUSB=0 adb logcat -c
+```
 
-    H264Encoder
-        MediaCodec configuration and encoded output
+Read Webcamera logs:
 
-    ControlServer
-        small newline-delimited JSON protocol
+```bash
+ADB_LIBUSB=0 adb logcat |
+  grep -i webcamera
+```
 
-    VideoServer
-        framed H.264 packet transport
+For a specific device:
 
-    StreamConfiguration
-        selected camera, size, FPS, and bitrate
+```bash
+ADB_LIBUSB=0 adb -s DEVICE_SERIAL logcat |
+  grep -i webcamera
+```
 
-    ConnectionState
-        client connection and streaming state
+---
 
-Avoid adding unrelated Android features before stable USB video streaming works.
+## Start Android application manually
 
-## Android camera API
+The current debug component is:
 
-The target device runs Android 5.1.
+```text
+com.theandreyzakharov.webcamera.debug/com.theandreyzakharov.webcamera.ui.MainActivity
+```
 
-Both camera APIs may be evaluated:
+Run:
 
-- Camera2;
-- legacy Camera API.
+```bash
+ADB_LIBUSB=0 adb -s DEVICE_SERIAL shell am start \
+  -n \
+  com.theandreyzakharov.webcamera.debug/com.theandreyzakharov.webcamera.ui.MainActivity
+```
 
-Use Camera2 only if the target device exposes a stable implementation.
+The service component is:
 
-The legacy Camera API is acceptable and may be preferable for the Meizu MX5.
+```text
+com.theandreyzakharov.webcamera.debug/com.theandreyzakharov.webcamera.service.CameraService
+```
 
-The first implementation needs only one selected camera at a time.
+Start it manually:
 
-## Android video encoding
+```bash
+ADB_LIBUSB=0 adb -s DEVICE_SERIAL shell am startservice \
+  -n \
+  com.theandreyzakharov.webcamera.debug/com.theandreyzakharov.webcamera.service.CameraService \
+  -a \
+  com.theandreyzakharov.webcamera.START_SERVICE
+```
 
-Use `MediaCodec` with H.264/AVC.
+---
 
-Prefer a hardware encoder.
+# USB transport development
 
-The encoder configuration must be compatible with:
+Run the transport test:
 
-- the selected camera output size;
-- the selected frame rate;
-- the input color format or surface input;
-- the target device;
-- stable USB transmission.
+```bash
+./scripts/test-usb-transport.sh
+```
 
-The first stable configuration may be fixed or chosen from a small tested set.
+For a specific device:
 
-## Android development stages
+```bash
+./scripts/test-usb-transport.sh DEVICE_SERIAL
+```
 
-1. Create or verify the Gradle project.
-2. Set minimum API 22.
-3. Build and install a minimal application.
-4. Request camera permission.
-5. Enumerate front and rear cameras.
-6. Display a local test preview.
-7. Choose a stable resolution and frame rate.
-8. Configure an H.264 `MediaCodec` encoder.
-9. Write a short diagnostic H.264 stream.
-10. Verify the stream with FFmpeg.
-11. Implement the control server.
-12. Implement the video server.
-13. Add ADB forwarding scripts.
-14. Receive and parse the stream on macOS.
-15. Decode H.264 through VideoToolbox.
-16. display the Android source in Webcamera.
-17. Add Mac-side recording for the Android source.
-18. Add foreground-service operation.
-19. Test screen-off and Flyme power-management behavior.
-20. Add reconnection and error recovery.
+The test verifies:
 
-## Android ports
+- ADB availability;
+- device state;
+- shell access;
+- activity package visibility;
+- control forwarding;
+- media forwarding;
+- forwarding-list output;
+- connection stability.
 
-Android-side defaults:
+The script must not remove unrelated ADB forwarding rules.
 
-    Control port: 27283
-    Video port:   27284
+---
 
-The Android servers bind to loopback:
+# Android control protocol
 
-    127.0.0.1:27283
-    127.0.0.1:27284
+Control messages are newline-delimited JSON.
 
-The Mac may allocate different local ports for every connected phone.
+Every outgoing macOS message contains:
 
-## Android first-version control messages
+```text
+version
+type
+sequence
+timestamp
+```
 
-The first protocol needs only enough control for a reliable webcam source:
+Common messages include:
 
-    hello
-    getCapabilities
-    capabilities
-    configure
-    configured
-    start
-    stop
-    status
-    ping
-    pong
-    error
+```text
+getCapabilities
+configure
+start
+stop
+getStatus
+requestKeyFrame
+setFlashMode
+```
 
-Advanced runtime camera controls are not required for the first Android version.
+Common Android responses include:
 
-## macOS Android source stages
+```text
+hello
+capabilities
+configured
+status
+flashStatus
+error
+```
 
-1. Detect devices with `adb devices -l`.
-2. Identify every source by ADB serial.
-3. Allocate unique local forwarding ports.
-4. Create forwarding rules.
-5. Connect to the Android control server.
-6. Read device and stream capabilities.
-7. Start the selected Android stream.
-8. Connect to the video server.
-9. parse framed H.264 packets.
-10. Decode frames through VideoToolbox.
-11. Display the source in the camera grid.
-12. Handle disconnect and reconnect.
-13. Add Mac-side recording.
-14. Keep Android failure isolated from local cameras.
+---
 
-## Multiple Android devices
+# Android media protocol
 
-The architecture may support several Android phones later.
+The media connection uses a fixed 36-byte header.
 
-Every device must use its own:
+Packet types are:
 
-- ADB serial;
-- local control port;
-- local video port;
-- control connection;
-- video connection;
-- decoder;
-- source state.
+```text
+1  videoConfiguration
+2  videoFrame
+3  audioConfiguration
+4  audioFrame
+5  endOfStream
+```
 
-Never execute device-specific ADB commands without:
+Media payloads larger than 32 MiB are rejected.
 
-    adb -s DEVICE_SERIAL
+All multi-byte integers use big-endian network byte order.
 
-## Release script
+---
 
-Build release artifacts:
+# Android recording development
 
-    ./scripts/build-release.sh 1.0.0
+Android recording is performed on macOS.
 
-Expected artifacts after both applications are implemented:
+## Video
 
-    release/Webcamera-Android-1.0.0.apk
-    release/Webcamera-macOS-1.0.0.zip
+Decoded `CVPixelBuffer` frames are written through:
 
-## Continuous integration
+```swift
+AVAssetWriterInputPixelBufferAdaptor
+```
+
+## Phone audio
+
+Phone AAC packets are wrapped in compressed audio sample buffers.
+
+Phone recording cannot begin until valid audio configuration has arrived.
+
+## macOS microphone
+
+A separate audio capture session records the selected Mac microphone.
+
+The microphone session exists only for the Android recording that uses it.
+
+## No Audio
+
+When `No Audio` is selected, only the video writer input is created.
+
+---
+
+# Recording diagnostics
+
+Inspect a recording:
+
+```bash
+ffprobe -hide_banner recording.mov
+```
+
+Inspect streams:
+
+```bash
+ffprobe \
+  -hide_banner \
+  -show_streams \
+  recording.mp4
+```
+
+Play:
+
+```bash
+ffplay recording.mov
+```
+
+Check whether audio exists:
+
+```bash
+ffprobe \
+  -v error \
+  -select_streams a \
+  -show_entries stream=codec_name,channels,sample_rate \
+  -of default=noprint_wrappers=1 \
+  recording.mov
+```
+
+Check video properties:
+
+```bash
+ffprobe \
+  -v error \
+  -select_streams v \
+  -show_entries stream=codec_name,width,height,r_frame_rate \
+  -of default=noprint_wrappers=1 \
+  recording.mov
+```
+
+Do not commit test recordings.
+
+---
+
+# Settings development
+
+Settings are stored with `UserDefaults`.
+
+Current stored values include:
+
+```text
+recordingFolderPath
+recordingFileFormat
+```
+
+Additional common audio defaults may also use `UserDefaults`.
+
+When changing settings behavior:
+
+- keep camera-specific selections independent;
+- do not replace per-camera choices automatically unless requested;
+- disable bulk changes while affected cameras are recording;
+- keep `Phone Microphone` Android-only.
+
+If macOS App Sandbox is enabled later, replace the plain folder path with a security-scoped bookmark.
+
+---
+
+# Release build
+
+Run:
+
+```bash
+./scripts/build-release.sh 1.0.0
+```
+
+The script creates:
+
+```text
+release/Webcamera-Android-1.0.0.apk
+release/Webcamera-macOS-1.0.0.zip
+release/SHA256SUMS.txt
+```
+
+The Android artifact is currently a debug-signed APK unless a release signing configuration is added.
+
+The macOS application is currently built without Developer ID signing and receives an ad-hoc signature for local distribution.
+
+For public macOS distribution, add:
+
+- Developer ID Application signing;
+- hardened runtime;
+- notarization;
+- stapling.
+
+For public Android distribution, add:
+
+- a release keystore;
+- Gradle release signing;
+- secure CI secrets;
+- version-code management.
+
+---
+
+# Continuous integration
 
 Workflow:
 
-    .github/workflows/build.yml
+```text
+.github/workflows/build.yml
+```
 
-The intended workflow builds:
+CI builds:
 
-- the Android APK on Linux;
-- the macOS application on a macOS runner.
+- the Android debug APK;
+- the unsigned macOS Release application;
+- compressed artifacts for both platforms.
 
-## Git workflow
+CI should fail when a required project is missing.
 
-Before development:
+It should not silently skip a platform that is part of the current repository.
 
-    git pull
+---
+
+# Git workflow
+
+Update before editing:
+
+```bash
+git pull --ff-only
+```
+
+Review the repository:
+
+```bash
+git status
+```
 
 Review changes:
 
-    git status
-    git diff
-    git diff --check
+```bash
+git diff
+git diff --check
+```
 
 Stage a logical change:
 
-    git add .
+```bash
+git add \
+  docs \
+  scripts \
+  shared/protocol \
+  .github/workflows/build.yml
+```
 
 Commit:
 
-    git commit -m "Describe the change"
+```bash
+git commit -m "Update documentation and build scripts"
+```
 
 Push:
 
-    git push
+```bash
+git push
+```
+
+---
+
+# Files that must not be committed
 
 Do not commit:
 
-- Gradle build output;
 - Xcode Derived Data;
-- release archives;
-- APK files;
+- Gradle build directories;
+- generated APK files;
+- generated application archives;
+- release artifacts;
 - recordings;
 - temporary MOV files;
-- raw H.264 streams;
-- signing credentials;
-- local recording-folder data;
-- local Android SDK configuration.
+- raw H.264 or AAC captures;
+- signing certificates;
+- Android keystores;
+- notarization credentials;
+- local SDK paths;
+- local recording-folder preferences;
+- temporary logs.
+
+Recommended ignored paths include:
+
+```text
+macos-app/DerivedData/
+macos-app/ReleaseDerivedData/
+android-app/.gradle/
+android-app/**/build/
+release/
+*.apk
+*.mov
+*.mp4
+*.h264
+*.aac
+*.log
+local.properties
+```
+
+---
+
+# Regression checklist
+
+Before committing camera-related changes, verify:
+
+## Local cameras
+
+- built-in camera appears;
+- external camera appears;
+- local camera tile appears;
+- local preview starts;
+- local preview stops;
+- video format changes;
+- microphone changes;
+- live monitor works;
+- audio meters move;
+- MOV recording works;
+- MP4 recording works.
+
+## Android source
+
+- phone appears in the sidebar;
+- Android tile appears;
+- connection succeeds;
+- rear camera works;
+- front camera works;
+- format selection works;
+- torch works where supported;
+- phone audio becomes available;
+- Phone Microphone recording works;
+- macOS microphone recording works;
+- No Audio recording works;
+- MOV recording works;
+- MP4 recording works.
+
+## Multi-source behavior
+
+- local and Android cameras appear together;
+- both can run simultaneously;
+- both can record simultaneously;
+- stopping one source does not stop the other;
+- removing one source does not crash the application;
+- separate preview windows work;
+- Record All creates separate files.

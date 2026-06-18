@@ -316,6 +316,12 @@ public final class CameraController
 
             if (currentCamera == null) {
                 torchEnabled = false;
+
+                configuration =
+                    configuration.withFlashMode(
+                        enabled ? "torch" : "off"
+                    );
+
                 return false;
             }
 

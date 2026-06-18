@@ -43,10 +43,30 @@ final class AppState: ObservableObject {
   @Published private(set)
     var controllers: [String: CameraController] = [:]
 
+  @Published private(set)
+    var androidControllers:
+      [String: AndroidCameraController] = [:]
+
+  private var androidDevices:
+    [String: ADBController.Device] = [:]
+
+  private var androidControllerSubscriptions:
+    [String: AnyCancellable] = [:]
+
   @Published var isSidebarVisible = true
   @Published var isSettingsPresented = false
 
   private var controllerTeardownTokens: [String: UUID] = [:]
+
+  private let adbController =
+    ADBController()
+
+  private var cameraRefreshTask:
+    Task<Void, Never>?
+
+  @Published private(set)
+    var androidDiscoveryError:
+      String?
 
   var selectedCameras: [CameraDeviceInfo] {
     cameras.filter {
@@ -58,10 +78,16 @@ final class AppState: ObservableObject {
     controllers.values.contains {
       $0.isRunning
     }
+    || androidControllers.values.contains {
+      $0.isRunning
+    }
   }
 
   var isAnyCameraRecording: Bool {
     controllers.values.contains {
+      $0.isRecording
+    }
+    || androidControllers.values.contains {
       $0.isRecording
     }
   }
@@ -69,9 +95,7 @@ final class AppState: ObservableObject {
   init() {
     refreshAuthorizationStatus()
 
-    if authorizationStatus == .authorized {
-      refreshCameras()
-    }
+    refreshCameras()
 
     if audioAuthorizationStatus == .authorized {
       refreshAudioDevices()
@@ -146,57 +170,176 @@ final class AppState: ObservableObject {
   }
 
   func refreshCameras() {
-    guard authorizationStatus == .authorized else {
-      stopAndRemoveAllControllers()
+    cameraRefreshTask?.cancel()
 
-      cameras = []
-      selectedCameraIDs = []
-      selectedConfigurationIDs = [:]
-      selectedAudioDeviceIDs = [:]
-      selectedRecordingFormats = [:]
-      selectedMonoAudioStates = [:]
-      controllerTeardownTokens = [:]
+    let localCameras =
+      authorizationStatus == .authorized
+      ? CameraDeviceInfo.localCameras()
+      : []
 
-      return
-    }
+    applyDiscoveredCameras(
+      localCameras
+    )
 
-    if audioAuthorizationStatus == .authorized {
-      refreshAudioDevices()
-    }
+    androidDiscoveryError = nil
 
+    cameraRefreshTask =
+      Task { [weak self] in
+        guard let self else {
+          return
+        }
+
+        do {
+          let devices =
+            try await adbController
+              .connectedDevices()
+
+          guard !Task.isCancelled else {
+            return
+          }
+
+          var discoveredAndroidDevices:
+            [String: ADBController.Device] = [:]
+
+          let androidCameras =
+            devices.map {
+              device in
+
+              let camera =
+                CameraDeviceInfo
+                .androidCamera(
+                  device: device
+                )
+
+              discoveredAndroidDevices[
+                camera.id
+              ] = device
+
+              return camera
+            }
+
+          androidDevices =
+            discoveredAndroidDevices
+
+          let allCameras =
+            CameraDeviceInfo.sorted(
+              localCameras
+                + androidCameras
+            )
+
+          androidDiscoveryError = nil
+
+          applyDiscoveredCameras(
+            allCameras
+          )
+        } catch {
+          guard !Task.isCancelled else {
+            return
+          }
+
+          androidDiscoveryError =
+            error.localizedDescription
+
+          /*
+           Локальные камеры не удаляем,
+           даже если adb завершился ошибкой.
+           */
+          androidDevices = [:]
+          applyDiscoveredCameras(
+            localCameras
+          )
+
+          print(
+            "Android discovery failed:",
+            error.localizedDescription
+          )
+        }
+      }
+  }
+
+  private func applyDiscoveredCameras(
+    _ discoveredCameras:
+      [CameraDeviceInfo]
+  ) {
     let previousSelection =
       selectedCameraIDs
 
-    let discoveredCameras =
-      CameraDeviceInfo.localCameras()
-
     let availableIDs =
-      Set(discoveredCameras.map(\.id))
+      Set(
+        discoveredCameras.map(\.id)
+      )
 
-    cameras = discoveredCameras
+    cameras =
+      CameraDeviceInfo.sorted(
+        discoveredCameras
+      )
 
     selectedCameraIDs =
       previousSelection.intersection(
         availableIDs
       )
 
+    /*
+     Автоматически выбираем первую камеру только при полностью
+     пустом состоянии. Android пока не передаём обычному
+     AVCapture-контроллеру.
+     */
     if selectedCameraIDs.isEmpty,
       controllers.isEmpty,
-      let firstCamera = cameras.first
+      let firstLocalCamera =
+        cameras.first(
+          where: {
+            !$0.isAndroid
+          }
+        )
     {
       selectedCameraIDs.insert(
-        firstCamera.id
+        firstLocalCamera.id
       )
     }
 
     removeUnavailableControllers(
-      availableIDs: availableIDs
+      availableIDs:
+        availableIDs
+    )
+    removeUnavailableAndroidControllers(
+      availableIDs:
+        availableIDs
     )
 
     for camera in selectedCameras {
       cancelScheduledControllerRemoval(
         cameraID: camera.id
       )
+
+      /*
+       Android использует AndroidCameraController.
+       Обычный CameraController с AVCaptureDevice ему не подходит.
+       Его подключим следующим изменением.
+       */
+      guard !camera.isAndroid else {
+        ensureAndroidController(
+          for: camera
+        )
+
+        ensureConfigurationSelection(
+          for: camera
+        )
+
+        ensureAudioSelection(
+          for: camera
+        )
+
+        ensureRecordingFormatSelection(
+          for: camera.id
+        )
+
+        ensureMonoAudioSelection(
+          for: camera.id
+        )
+
+        continue
+      }
 
       ensureController(
         for: camera
@@ -218,7 +361,9 @@ final class AppState: ObservableObject {
         for: camera.id
       )
 
-      configureCamera(camera.id)
+      configureCamera(
+        camera.id
+      )
     }
   }
 
@@ -236,10 +381,18 @@ final class AppState: ObservableObject {
 
     for camera in selectedCameras {
       if let selectedID =
-        selectedAudioDeviceIDs[camera.id],
+        selectedAudioDeviceIDs[
+          camera.id
+        ],
         availableAudioIDs.contains(
           selectedID
         )
+          || (
+            camera.isAndroid
+            && selectedID
+              == AudioDeviceInfo
+              .phoneAudioID
+          )
       {
         continue
       }
@@ -276,6 +429,29 @@ final class AppState: ObservableObject {
       selectedCameraIDs.insert(
         cameraID
       )
+      if camera.isAndroid {
+        ensureAndroidController(
+          for: camera
+        )
+
+        ensureConfigurationSelection(
+          for: camera
+        )
+
+        ensureAudioSelection(
+          for: camera
+        )
+
+        ensureRecordingFormatSelection(
+          for: camera.id
+        )
+
+        ensureMonoAudioSelection(
+          for: camera.id
+        )
+
+        return
+      }
 
       ensureController(
         for: camera
@@ -302,6 +478,25 @@ final class AppState: ObservableObject {
       selectedCameraIDs.remove(
         cameraID
       )
+      if camera.isAndroid {
+        androidControllers[
+          cameraID
+        ]?.disconnect()
+
+        androidControllers[
+          cameraID
+        ] = nil
+
+        androidControllerSubscriptions[
+          cameraID
+        ] = nil
+
+        removeSelections(
+          for: cameraID
+        )
+
+        return
+      }
 
       scheduleControllerRemoval(
         cameraID: cameraID
@@ -337,7 +532,45 @@ final class AppState: ObservableObject {
       cameraID
     ] = configurationID
 
-    configureCamera(cameraID)
+    if camera(
+      withID: cameraID
+    )?.isAndroid == true
+    {
+      let selectedFormat =
+        configurations(
+          for: cameraID
+        )
+        .first {
+          $0.id
+            == configurationID
+        }
+
+      androidControllers[
+        cameraID
+      ]?.selectVideoFormat(
+        selectedFormat
+      )
+    } else {
+      configureCamera(
+        cameraID
+      )
+    }
+  }
+
+  func audioDevices(
+    for cameraID: String
+  ) -> [AudioDeviceInfo] {
+    guard
+      camera(
+        withID: cameraID
+      )?.isAndroid == true
+    else {
+      return audioDevices
+    }
+
+    return [
+      .phoneMicrophone,
+    ] + audioDevices
   }
 
   func selectedAudioDeviceID(
@@ -357,8 +590,12 @@ final class AppState: ObservableObject {
       return
     }
 
-    if audioDeviceID != AudioDeviceInfo.noAudioID,
-      audioAuthorizationStatus != .authorized
+    if audioDeviceID
+        != AudioDeviceInfo.noAudioID,
+      audioDeviceID
+        != AudioDeviceInfo.phoneAudioID,
+      audioAuthorizationStatus
+        != .authorized
     {
       requestMicrophoneAccess()
       return
@@ -368,7 +605,14 @@ final class AppState: ObservableObject {
       cameraID
     ] = audioDeviceID
 
-    configureCamera(cameraID)
+    if camera(
+      withID: cameraID
+    )?.isAndroid != true
+    {
+      configureCamera(
+        cameraID
+      )
+    }
   }
 
   func recordingFormat(
@@ -388,8 +632,10 @@ final class AppState: ObservableObject {
       selectedCameraIDs.contains(
         cameraID
       ),
-      controllers[cameraID]?.isRecording
-        != true
+      controllers[cameraID]?
+        .isRecording != true,
+      androidControllers[cameraID]?
+        .isRecording != true
     else {
       return
     }
@@ -415,7 +661,31 @@ final class AppState: ObservableObject {
     guard
       selectedCameraIDs.contains(
         cameraID
-      ),
+      )
+    else {
+      return
+    }
+
+    if let androidController =
+      androidControllers[
+        cameraID
+      ]
+    {
+      guard
+        !androidController
+          .isRecording
+      else {
+        return
+      }
+
+      selectedMonoAudioStates[
+        cameraID
+      ] = enabled
+
+      return
+    }
+
+    guard
       let controller =
         controllers[cameraID],
       !controller.isRecording
@@ -457,6 +727,33 @@ final class AppState: ObservableObject {
     controllers[cameraID]
   }
 
+  func androidController(
+    for cameraID: String
+  ) -> AndroidCameraController? {
+    androidControllers[
+      cameraID
+    ]
+  }
+
+  func selectAndroidCamera(
+    cameraID: String,
+    androidCameraID: String
+  ) {
+    androidControllers[
+      cameraID
+    ]?.selectCamera(
+      androidCameraID
+    )
+  }
+
+  func toggleAndroidTorch(
+    cameraID: String
+  ) {
+    androidControllers[
+      cameraID
+    ]?.toggleTorch()
+  }
+
   func cameraName(
     for cameraID: String
   ) -> String {
@@ -469,7 +766,23 @@ final class AppState: ObservableObject {
     _ cameraID: String
   ) {
     guard
-      selectedCameraIDs.contains(cameraID),
+      selectedCameraIDs.contains(
+        cameraID
+      )
+    else {
+      return
+    }
+
+    if let androidController =
+      androidControllers[
+        cameraID
+      ]
+    {
+      androidController.start()
+      return
+    }
+
+    guard
       let controller =
         controllers[cameraID]
     else {
@@ -479,15 +792,27 @@ final class AppState: ObservableObject {
     if controller.isConfigured {
       controller.start()
     } else {
-      configureCamera(cameraID)
+      configureCamera(
+        cameraID
+      )
     }
   }
 
   func stopCamera(
     _ cameraID: String
   ) {
-    controllers[cameraID]?
-      .stop()
+    if let androidController =
+      androidControllers[
+        cameraID
+      ]
+    {
+      androidController.stop()
+      return
+    }
+
+    controllers[
+      cameraID
+    ]?.stop()
   }
 
   func startAllCameras() {
@@ -498,8 +823,9 @@ final class AppState: ObservableObject {
 
   func stopAllCameras() {
     for cameraID in selectedCameraIDs {
-      controllers[cameraID]?
-        .stop()
+      stopCamera(
+        cameraID
+      )
     }
   }
 
@@ -507,7 +833,57 @@ final class AppState: ObservableObject {
     cameraID: String
   ) {
     guard
-      selectedCameraIDs.contains(cameraID),
+      selectedCameraIDs.contains(
+        cameraID
+      )
+    else {
+      return
+    }
+
+    if let androidController =
+      androidControllers[
+        cameraID
+      ],
+      androidController.isRunning
+    {
+      let selectedAudioID =
+        selectedAudioDeviceID(
+          for: cameraID
+        )
+
+      let selectedAudioDevice =
+        audioDevices(
+          for: cameraID
+        )
+        .first {
+          $0.id
+            == selectedAudioID
+        }
+        ?? .noAudio
+
+      androidController.startRecording(
+        folderURL:
+          recordingFolderURL,
+        cameraName:
+          cameraName(
+            for: cameraID
+          ),
+        format:
+          recordingFormat(
+            for: cameraID
+          ),
+        audioDevice:
+          selectedAudioDevice,
+        monoAudio:
+          isMonoAudioEnabled(
+            for: cameraID
+          )
+      )
+
+      return
+    }
+
+    guard
       let controller =
         controllers[cameraID],
       controller.isRunning
@@ -516,22 +892,53 @@ final class AppState: ObservableObject {
     }
 
     controller.startRecording(
-      folderURL: recordingFolderURL,
-      format: recordingFormat(
-        for: cameraID
-      )
+      folderURL:
+        recordingFolderURL,
+      format:
+        recordingFormat(
+          for: cameraID
+        )
     )
   }
 
   func stopRecording(
     cameraID: String
   ) {
-    controllers[cameraID]?
-      .stopRecording()
+    if let androidController =
+      androidControllers[
+        cameraID
+      ]
+    {
+      androidController
+        .stopRecording()
+
+      return
+    }
+
+    controllers[
+      cameraID
+    ]?.stopRecording()
   }
 
   func startRecordingAll() {
-    for cameraID in selectedCameraIDs {
+    for cameraID
+      in selectedCameraIDs
+    {
+      if let androidController =
+        androidControllers[
+          cameraID
+        ],
+        androidController.isRunning,
+        !androidController.isRecording
+      {
+        startRecording(
+          cameraID:
+            cameraID
+        )
+
+        continue
+      }
+
       guard
         let controller =
           controllers[cameraID],
@@ -542,17 +949,28 @@ final class AppState: ObservableObject {
       }
 
       controller.startRecording(
-        folderURL: recordingFolderURL,
-        format: recordingFormat(
-          for: cameraID
-        )
+        folderURL:
+          recordingFolderURL,
+        format:
+          recordingFormat(
+            for: cameraID
+          )
       )
     }
   }
 
   func stopRecordingAll() {
-    for controller in controllers.values
-    where controller.isRecording {
+    for controller
+      in controllers.values
+    where controller.isRecording
+    {
+      controller.stopRecording()
+    }
+
+    for controller
+      in androidControllers.values
+    where controller.isRecording
+    {
       controller.stopRecording()
     }
   }
@@ -564,6 +982,8 @@ final class AppState: ObservableObject {
     for cameraID in selectedCameraIDs {
       guard
         controllers[cameraID]?
+          .isRecording != true,
+        androidControllers[cameraID]?
           .isRecording != true
       else {
         continue
@@ -572,6 +992,60 @@ final class AppState: ObservableObject {
       selectedRecordingFormats[
         cameraID
       ] = format
+    }
+  }
+
+  func applyAudioDeviceToAll(
+    audioDeviceID: String
+  ) {
+    if audioDeviceID
+        != AudioDeviceInfo.noAudioID,
+      audioAuthorizationStatus
+        != .authorized
+    {
+      requestMicrophoneAccess()
+      return
+    }
+
+    let availableIDs =
+      Set(
+        audioDevices.map(\.id)
+      )
+
+    guard
+      audioDeviceID
+        == AudioDeviceInfo.noAudioID
+        || availableIDs.contains(
+          audioDeviceID
+        )
+    else {
+      return
+    }
+
+    for cameraID
+      in selectedCameraIDs
+    {
+      guard
+        controllers[cameraID]?
+          .isRecording != true,
+        androidControllers[cameraID]?
+          .isRecording != true
+      else {
+        continue
+      }
+
+      selectedAudioDeviceIDs[
+        cameraID
+      ] = audioDeviceID
+
+      if androidControllers[
+        cameraID
+      ] == nil
+      {
+        configureCamera(
+          cameraID
+        )
+      }
     }
   }
 
@@ -723,6 +1197,62 @@ final class AppState: ObservableObject {
     }
   }
 
+  private func ensureAndroidController(
+    for camera:
+      CameraDeviceInfo
+  ) {
+    guard camera.isAndroid else {
+      return
+    }
+
+    guard
+      androidControllers[
+        camera.id
+      ] == nil
+    else {
+      return
+    }
+
+    guard
+      let device =
+        androidDevices[
+          camera.id
+        ]
+    else {
+      return
+    }
+
+    let controller =
+      AndroidCameraController(
+        device: device,
+        adbController:
+          adbController
+      )
+
+    let subscription =
+      controller
+      .objectWillChange
+      .sink {
+        [weak self]
+        _ in
+
+        Task { @MainActor in
+          self?
+            .objectWillChange
+            .send()
+        }
+      }
+
+    androidControllers[
+      camera.id
+    ] = controller
+
+    androidControllerSubscriptions[
+      camera.id
+    ] = subscription
+  }
+
+
   private func ensureController(
     for camera: CameraDeviceInfo
   ) {
@@ -773,11 +1303,16 @@ final class AppState: ObservableObject {
   private func ensureAudioSelection(
     for camera: CameraDeviceInfo
   ) {
+    let availableDevices =
+      audioDevices(
+        for: camera.id
+      )
+
     if let existingID =
       selectedAudioDeviceIDs[
         camera.id
       ],
-      audioDevices.contains(
+      availableDevices.contains(
         where: {
           $0.id == existingID
         }
@@ -786,7 +1321,19 @@ final class AppState: ObservableObject {
       return
     }
 
-    guard audioAuthorizationStatus == .authorized else {
+    if camera.isAndroid {
+      selectedAudioDeviceIDs[
+        camera.id
+      ] =
+        AudioDeviceInfo.phoneAudioID
+
+      return
+    }
+
+    guard
+      audioAuthorizationStatus
+        == .authorized
+    else {
       selectedAudioDeviceIDs[
         camera.id
       ] =
@@ -988,6 +1535,38 @@ final class AppState: ObservableObject {
     }
   }
 
+  private func removeUnavailableAndroidControllers(
+    availableIDs:
+      Set<String>
+  ) {
+    let unavailableIDs =
+      Set(
+        androidControllers.keys
+      )
+      .subtracting(
+        availableIDs
+      )
+
+    for cameraID in unavailableIDs {
+      androidControllers[
+        cameraID
+      ]?.disconnect()
+
+      androidControllers[
+        cameraID
+      ] = nil
+
+      androidControllerSubscriptions[
+        cameraID
+      ] = nil
+
+      removeSelections(
+        for: cameraID
+      )
+    }
+  }
+
+
   private func removeSelections(
     for cameraID: String
   ) {
@@ -1012,12 +1591,29 @@ final class AppState: ObservableObject {
     controllerTeardownTokens = [:]
 
     let existingControllers =
-      Array(controllers.values)
+      Array(
+        controllers.values
+      )
+
+    let existingAndroidControllers =
+      Array(
+        androidControllers.values
+      )
 
     controllers = [:]
+    androidControllers = [:]
+
+    androidControllerSubscriptions =
+      [:]
 
     for controller in existingControllers {
       controller.clear()
+    }
+
+    for controller
+      in existingAndroidControllers
+    {
+      controller.disconnect()
     }
   }
 }

@@ -1,4 +1,5 @@
 import AVFoundation
+import CoreMedia
 import Foundation
 
 enum CameraSourceKind: String, Codable {
@@ -47,7 +48,11 @@ enum CameraSourceKind: String, Codable {
 }
 
 struct AudioDeviceInfo: Identifiable, Hashable {
-  static let noAudioID = "__webcamera_no_audio__"
+  static let noAudioID =
+    "__webcamera_no_audio__"
+
+  static let phoneAudioID =
+    "__webcamera_phone_audio__"
 
   let id: String
   let name: String
@@ -56,6 +61,10 @@ struct AudioDeviceInfo: Identifiable, Hashable {
   var isNoAudio: Bool {
     id == Self.noAudioID
   }
+  var isPhoneAudio: Bool {
+    id == Self.phoneAudioID
+  }
+
 
   static var noAudio: AudioDeviceInfo {
     AudioDeviceInfo(
@@ -65,11 +74,23 @@ struct AudioDeviceInfo: Identifiable, Hashable {
     )
   }
 
-  static func systemAudioDevices() -> [AudioDeviceInfo] {
+  static var phoneMicrophone:
+    AudioDeviceInfo
+  {
+    AudioDeviceInfo(
+      id: phoneAudioID,
+      name: "Phone Microphone",
+      device: nil
+    )
+  }
+
+  static func systemAudioDevices()
+    -> [AudioDeviceInfo]
+  {
     let discovery =
       AVCaptureDevice.DiscoverySession(
         deviceTypes: [
-          .microphone
+          .microphone,
         ],
         mediaType: .audio,
         position: .unspecified
@@ -85,9 +106,10 @@ struct AudioDeviceInfo: Identifiable, Hashable {
         )
       }
       .sorted {
-        $0.name.localizedCaseInsensitiveCompare(
-          $1.name
-        ) == .orderedAscending
+        $0.name
+          .localizedCaseInsensitiveCompare(
+            $1.name
+          ) == .orderedAscending
       }
 
     return [.noAudio] + devices
@@ -97,6 +119,15 @@ struct AudioDeviceInfo: Identifiable, Hashable {
     for camera: CameraDeviceInfo,
     from audioDevices: [AudioDeviceInfo]
   ) -> String {
+    /*
+    Для Android по умолчанию используем микрофон телефона.
+    При необходимости пользователь сможет выбрать любой
+    системный микрофон macOS или No Audio.
+    */
+    if camera.kind == .android {
+      return phoneAudioID
+    }
+
     let availableDevices =
       audioDevices.filter {
         !$0.isNoAudio
@@ -218,6 +249,16 @@ struct CameraDeviceInfo:
   let device: AVCaptureDevice?
   let formats: [VideoFormat]
 
+  /*
+   Для обычной камеры это nil.
+   Для Android здесь находится серийный номер ADB.
+   */
+  let androidDeviceID: String?
+
+  var isAndroid: Bool {
+    kind == .android
+  }
+
   var subtitle: String {
     switch kind {
     case .builtIn:
@@ -227,6 +268,13 @@ struct CameraDeviceInfo:
       return "Connected or virtual camera"
 
     case .android:
+      if let androidDeviceID,
+        !androidDeviceID.isEmpty
+      {
+        return
+          "Android USB camera · \(androidDeviceID)"
+      }
+
       return "Android USB camera"
     }
   }
@@ -259,23 +307,94 @@ struct CameraDeviceInfo:
           formats:
             VideoFormat.formats(
               for: device
-            )
+            ),
+          androidDeviceID: nil
         )
       }
-      .sorted {
-        if $0.kind.sortOrder
-          != $1.kind.sortOrder
-        {
-          return $0.kind.sortOrder
-            < $1.kind.sortOrder
-        }
+      .sorted(
+        by: sortCameras
+      )
+  }
 
-        return $0.name
-          .localizedCaseInsensitiveCompare(
-            $1.name
-          )
-          == .orderedAscending
-      }
+  static func androidCamera(
+    device: ADBController.Device
+  ) -> CameraDeviceInfo {
+    CameraDeviceInfo(
+      id:
+        "android:\(device.id)",
+      name:
+        "\(device.displayName) Camera",
+      kind: .android,
+      device: nil,
+      formats:
+        defaultAndroidFormats(
+          deviceID: device.id
+        ),
+      androidDeviceID:
+        device.id
+    )
+  }
+
+  static func sorted(
+    _ cameras: [CameraDeviceInfo]
+  ) -> [CameraDeviceInfo] {
+    cameras.sorted(
+      by: sortCameras
+    )
+  }
+
+  private static func defaultAndroidFormats(
+    deviceID: String
+  ) -> [VideoFormat] {
+    let subtype =
+      kCVPixelFormatType_420YpCbCr8BiPlanarVideoRange
+
+    let values: [
+      (
+        width: Int,
+        height: Int,
+        frameRate: Double
+      )
+    ] = [
+      (1920, 1080, 30),
+      (1280, 720, 30),
+      (960, 540, 30),
+      (640, 480, 30),
+    ]
+
+    return values.enumerated().map {
+      index,
+      value in
+
+      VideoFormat(
+        id:
+          "android:\(deviceID):\(value.width)x\(value.height)@\(Int(value.frameRate))",
+        width: value.width,
+        height: value.height,
+        frameRate:
+          value.frameRate,
+        formatIndex: index,
+        mediaSubType:
+          subtype
+      )
+    }
+  }
+
+  private static func sortCameras(
+    _ lhs: CameraDeviceInfo,
+    _ rhs: CameraDeviceInfo
+  ) -> Bool {
+    if lhs.kind.sortOrder
+      != rhs.kind.sortOrder
+    {
+      return lhs.kind.sortOrder
+        < rhs.kind.sortOrder
+    }
+
+    return lhs.name
+      .localizedCaseInsensitiveCompare(
+        rhs.name
+      ) == .orderedAscending
   }
 
   static func == (

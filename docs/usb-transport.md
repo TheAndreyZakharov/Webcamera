@@ -1,112 +1,125 @@
-# USB Transport
+# Webcamera USB Transport
 
 ## Overview
 
-Webcamera uses Android Debug Bridge port forwarding to connect an Android phone to the macOS application over USB.
+Webcamera connects an Android phone to the macOS application through Android Debug Bridge port forwarding over USB.
 
-The Android application has one primary purpose:
+The USB transport carries:
 
-    send the phone camera image to the Mac as a Webcamera video source
-
-One USB cable provides:
-
-- phone charging;
-- ADB access;
-- control transport;
-- encoded video transport.
+- control messages;
+- H.264 video;
+- AAC phone microphone audio;
+- stream status;
+- camera capability information;
+- phone camera selection;
+- Android stream configuration;
+- torch commands;
+- errors.
 
 No Wi-Fi connection is required.
 
-Built-in Mac cameras and cameras connected directly to the Mac do not use this transport.
+Local Mac cameras do not use this transport.
 
-## First-version scope
-
-The first Android transport supports:
-
-- device identification;
-- basic camera capability reporting;
-- stream configuration;
-- stream start;
-- stream stop;
-- H.264 video transport;
-- connection status;
-- keepalive;
-- errors;
-- reconnection.
-
-The first version does not require:
-
-- audio transport;
-- phone-side recording;
-- remote zoom;
-- remote focus;
-- remote exposure;
-- remote torch;
-- remote white balance;
-- file transfer;
-- media synchronization;
-- Wi-Fi fallback.
-
-Recording is performed by the macOS application.
+---
 
 ## Runtime topology
 
-    Android camera
-          ↓
-    Android camera capture
-          ↓
-    MediaCodec H.264 encoder
-          ↓
-    Android loopback TCP servers
-          ↓
-    ADB USB port forwarding
-          ↓
-    macOS localhost TCP clients
-          ↓
-    H.264 packet parser
-          ↓
-    VideoToolbox decoder
-          ↓
-    Webcamera preview
-          ↓
-    Mac-side recording
+```text
+Android camera
+      ↓
+Android camera capture
+      ↓
+H.264 MediaCodec encoder
+      ↓
+Android media server
+      ↓
+ADB USB forwarding
+      ↓
+macOS media connection
+      ↓
+H.264 packet parser
+      ↓
+VideoToolbox decoder
+      ↓
+CVPixelBuffer
+      ↓
+macOS preview and recording
+```
+
+Phone microphone audio follows:
+
+```text
+Android microphone
+      ↓
+AAC encoder
+      ↓
+Android media server
+      ↓
+ADB USB forwarding
+      ↓
+macOS media connection
+      ↓
+AAC packet parser
+      ↓
+AVAssetWriter
+      ↓
+macOS recording
+```
+
+---
 
 ## Android-side ports
 
-Default Android ports:
+Default ports:
 
-    Control port: 27283
-    Video port:   27284
+```text
+Control port: 27283
+Media port:   27284
+```
 
-The Android application listens on:
+The Android application listens on loopback:
 
-    127.0.0.1:27283
-    127.0.0.1:27284
+```text
+127.0.0.1:27283
+127.0.0.1:27284
+```
 
-Binding to loopback prevents normal network access to the servers.
+The servers must not bind to:
 
-The Mac reaches them through ADB forwarding.
+```text
+0.0.0.0
+```
 
-## Local Mac ports
+unless a separately secured network transport is implemented.
 
-For one device, the Mac may use the same local port numbers:
+---
 
-    Mac control: 27283
-    Mac video:   27284
+## Current macOS local ports
 
-For multiple devices, every device must receive different local Mac ports.
+The current macOS controller forwards the same local port numbers:
 
-Example:
+```text
+127.0.0.1:27283
+127.0.0.1:27284
+```
 
-    Device A:
-        Mac control: 27283
-        Mac video:   27284
+Forwarding commands:
 
-    Device B:
-        Mac control: 27383
-        Mac video:   27384
+```bash
+ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward \
+  tcp:27283 \
+  tcp:27283
 
-Both phones still use Android-side ports 27283 and 27284.
+ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward \
+  tcp:27284 \
+  tcp:27284
+```
+
+Because the local ports are currently fixed, only one Android source can actively use the transport at a time without local-port conflicts.
+
+Future multi-phone support requires unique local Mac ports per ADB serial.
+
+---
 
 ## Device identity
 
@@ -114,422 +127,590 @@ Every Android phone is identified by its ADB serial.
 
 List devices:
 
-    ADB_LIBUSB=0 adb devices -l
+```bash
+ADB_LIBUSB=0 adb devices -l
+```
 
 Example:
 
-    SERIAL_A    device product:... model:...
-    SERIAL_B    device product:... model:...
+```text
+SERIAL_NUMBER    device product:... model:... device:...
+```
 
-The ADB serial must not be hardcoded.
+All device-specific ADB commands must use:
 
-All device-specific commands use:
+```bash
+adb -s DEVICE_SERIAL
+```
 
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL ...
+The device serial must not be hardcoded.
+
+---
+
+## ADB executable discovery
+
+The macOS application searches common ADB paths:
+
+```text
+/opt/homebrew/bin/adb
+/usr/local/bin/adb
+~/Library/Android/sdk/platform-tools/adb
+~/Android/Sdk/platform-tools/adb
+```
+
+The application sets:
+
+```text
+ADB_LIBUSB=0
+```
+
+This matches the scripts used during development.
+
+---
+
+## Android application startup
+
+The macOS controller starts the Android debug activity:
+
+```text
+com.theandreyzakharov.webcamera.debug/com.theandreyzakharov.webcamera.ui.MainActivity
+```
+
+It also attempts to start:
+
+```text
+com.theandreyzakharov.webcamera.debug/com.theandreyzakharov.webcamera.service.CameraService
+```
+
+with action:
+
+```text
+com.theandreyzakharov.webcamera.START_SERVICE
+```
+
+Manual commands:
+
+```bash
+ADB_LIBUSB=0 adb -s DEVICE_SERIAL shell am start \
+  -n \
+  com.theandreyzakharov.webcamera.debug/com.theandreyzakharov.webcamera.ui.MainActivity
+```
+
+```bash
+ADB_LIBUSB=0 adb -s DEVICE_SERIAL shell am startservice \
+  -n \
+  com.theandreyzakharov.webcamera.debug/com.theandreyzakharov.webcamera.service.CameraService \
+  -a \
+  com.theandreyzakharov.webcamera.START_SERVICE
+```
+
+---
 
 ## Control connection
 
-The control connection uses newline-delimited UTF-8 JSON messages.
+The control connection uses newline-delimited UTF-8 JSON.
 
-It carries:
+Every message is terminated by:
 
-- protocol version;
-- device identity;
-- available phone cameras;
-- supported stream configurations;
-- selected stream configuration;
-- start command;
-- stop command;
-- status updates;
-- keepalive;
-- errors.
+```text
+\n
+```
 
-The control connection is intentionally small in the first Android version.
+The macOS implementation supports:
 
-Advanced camera controls can be added later without changing the separate video transport.
+- partial reads;
+- multiple messages in one read;
+- empty lines;
+- JSON validation;
+- connection failure;
+- connection closure;
+- asynchronous sends.
 
-## Video connection
+Outgoing macOS messages automatically include:
 
-The video connection carries framed H.264 packets.
+```text
+version
+type
+sequence
+timestamp
+```
 
-It is separate from the control connection so that:
+---
 
-- large video packets do not delay commands;
-- keepalive remains responsive;
-- control errors can be reported independently;
-- the video connection can restart;
-- decoder state remains source-specific;
-- future multiple Android devices remain isolated.
+## Current control messages
+
+macOS sends messages including:
+
+```text
+getCapabilities
+getStatus
+configure
+start
+stop
+requestKeyFrame
+setFlashMode
+```
+
+Android sends messages including:
+
+```text
+hello
+capabilities
+configured
+status
+flashStatus
+error
+```
+
+---
+
+## Android camera configuration
+
+The current configure request contains:
+
+```text
+cameraId
+width
+height
+frameRate
+bitRate
+audioEnabled
+audioBitRate
+flashMode
+zoom
+```
+
+Example:
+
+```json
+{
+  "version": 1,
+  "type": "configure",
+  "sequence": 123,
+  "timestamp": 456789,
+  "cameraId": "0",
+  "width": 1280,
+  "height": 720,
+  "frameRate": 30,
+  "bitRate": 4000000,
+  "audioEnabled": true,
+  "audioBitRate": 128000,
+  "flashMode": "off",
+  "zoom": 1.0
+}
+```
+
+The selected format is source-specific.
+
+The Android application should respond with `configured` only after applying the configuration successfully.
+
+---
+
+## Torch control
+
+Torch changes use:
+
+```text
+setFlashMode
+```
+
+Enable:
+
+```json
+{
+  "version": 1,
+  "type": "setFlashMode",
+  "sequence": 1,
+  "timestamp": 1000,
+  "flashMode": "torch"
+}
+```
+
+Disable:
+
+```json
+{
+  "version": 1,
+  "type": "setFlashMode",
+  "sequence": 2,
+  "timestamp": 1100,
+  "flashMode": "off"
+}
+```
+
+Android responds with:
+
+```text
+flashStatus
+```
+
+The response may include:
+
+```text
+available
+appliedMode
+message
+```
+
+---
+
+## Media connection
+
+The binary media connection carries both video and phone audio.
+
+The macOS implementation is named `VideoConnection` for historical reasons.
+
+The supported packet types are:
+
+```text
+1  videoConfiguration
+2  videoFrame
+3  audioConfiguration
+4  audioFrame
+5  endOfStream
+```
+
+---
+
+## Binary packet header
+
+Every packet begins with a 36-byte header:
+
+```text
+magic                    4 bytes
+version                  1 byte
+packetType               1 byte
+flags                    2 bytes
+sequence                 8 bytes
+presentationTimestamp    8 bytes
+decodeTimestamp          8 bytes
+payloadLength            4 bytes
+```
+
+All multi-byte values use network byte order.
+
+Magic bytes:
+
+```text
+57 42 43 4D
+```
+
+ASCII:
+
+```text
+WBCM
+```
+
+Maximum payload size:
+
+```text
+32 MiB
+```
+
+---
+
+## Packet flags
+
+Current flags include:
+
+```text
+0x0001  key frame
+0x0002  codec configuration
+```
+
+Packet type remains the primary indicator of packet content.
+
+---
+
+## Video configuration packets
+
+`videoConfiguration` contains H.264 codec setup data.
+
+The current macOS decoder expects Annex B data containing:
+
+- SPS;
+- PPS.
+
+The decoder must receive valid configuration before decoding normal frames.
+
+Configuration should be sent:
+
+- before the first frame;
+- after encoder restart;
+- after resolution change;
+- after media reconnection.
+
+---
+
+## Video frame packets
+
+`videoFrame` contains H.264 Annex B frame data.
+
+The packet includes:
+
+- presentation timestamp;
+- decode timestamp;
+- sequence;
+- key-frame flag;
+- complete frame payload.
+
+The macOS decoder converts Annex B NAL units to AVCC before creating a sample buffer.
+
+---
+
+## Audio configuration packets
+
+`audioConfiguration` contains AAC codec configuration.
+
+The macOS recorder stores the configuration and creates a compressed audio format description.
+
+The configuration must arrive before phone-microphone recording can begin.
+
+---
+
+## Audio frame packets
+
+`audioFrame` contains one compressed AAC audio packet.
+
+The packet uses the media header presentation timestamp.
+
+The macOS recorder:
+
+1. creates a block buffer;
+2. copies AAC payload bytes;
+3. creates a compressed audio sample buffer;
+4. assigns duration and timestamp;
+5. appends it to the Android recording.
+
+---
+
+## End-of-stream packets
+
+`endOfStream` marks an intentional media stop.
+
+The Mac uses it to update Android stream state.
+
+The payload is normally empty.
+
+---
 
 ## Stream lifecycle
 
 A normal stream lifecycle is:
 
-1. Android application starts its local servers.
-2. Mac detects the phone through ADB.
-3. Mac creates forwarding rules.
-4. Mac connects to the control server.
-5. Android sends device identity.
-6. Mac requests capabilities.
-7. Android reports cameras and usable stream configurations.
-8. Mac sends a configuration.
-9. Android applies the configuration.
-10. Mac connects to the video server.
-11. Mac sends `start`.
-12. Android starts camera capture.
-13. Android starts the H.264 encoder.
-14. Android sends codec configuration.
-15. Android sends encoded frames.
-16. Mac decodes and displays frames.
-17. Mac records frames when requested.
-18. Mac sends `stop`.
-19. Android sends end-of-stream information.
-20. Android stops camera and encoder resources.
+1. Mac discovers the ADB device.
+2. Mac starts the Android activity.
+3. Mac attempts to start the Android service.
+4. Mac creates control forwarding.
+5. Mac creates media forwarding.
+6. Mac connects to the control server.
+7. Mac connects to the media server.
+8. Mac requests capabilities.
+9. Android reports phone cameras.
+10. Mac selects a camera and format.
+11. Mac sends `configure`.
+12. Android responds with `configured`.
+13. Mac sends `start`.
+14. Android starts camera and encoders.
+15. Android sends H.264 configuration.
+16. Android sends AAC configuration when audio is enabled.
+17. Android sends video and audio packets.
+18. macOS decodes and displays video.
+19. macOS optionally records video and audio.
+20. Mac sends `stop`.
+21. Android sends end-of-stream.
+22. Android releases streaming resources.
 
-## Forwarding creation
-
-Create forwarding for one device:
-
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward tcp:LOCAL_CONTROL_PORT tcp:27283
-
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward tcp:LOCAL_VIDEO_PORT tcp:27284
-
-Example:
-
-    ADB_LIBUSB=0 adb -s SERIAL_A forward tcp:27283 tcp:27283
-
-    ADB_LIBUSB=0 adb -s SERIAL_A forward tcp:27284 tcp:27284
-
-## Forwarding lifecycle
-
-For every Android source, the Mac:
-
-1. verifies that the ADB device is online;
-2. resolves its ADB serial;
-3. allocates unused local ports;
-4. removes stale forwarding rules for those local ports;
-5. creates a control forwarding rule;
-6. creates a video forwarding rule;
-7. starts or verifies the Android application when supported;
-8. connects to the control server;
-9. connects to the video server when streaming begins.
-
-Forwarding rules are recreated after:
-
-- cable reconnection;
-- ADB daemon restart;
-- phone restart;
-- Android application restart;
-- macOS application restart;
-- local-port conflict.
-
-## Removing forwarding
-
-List forwarding rules:
-
-    ADB_LIBUSB=0 adb forward --list
-
-Remove one control rule:
-
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward --remove tcp:LOCAL_CONTROL_PORT
-
-Remove one video rule:
-
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward --remove tcp:LOCAL_VIDEO_PORT
-
-Remove all rules for a device when appropriate:
-
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward --remove-all
-
-The Mac should remove only rules that belong to Webcamera.
-
-## Android application startup
-
-During development, the Mac or scripts may start the Android activity with ADB.
-
-The exact component name depends on the Android package.
-
-Example structure:
-
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL shell am start -n PACKAGE_NAME/.MainActivity
-
-A foreground service may continue streaming after the activity is no longer visible.
-
-The first implementation must not depend on the Android screen remaining on.
-
-## Camera configuration
-
-The Android application reports a list of usable stream configurations.
-
-A configuration may contain:
-
-- camera identifier;
-- front or rear facing;
-- width;
-- height;
-- frame rate;
-- bitrate;
-- encoder name.
-
-The first version should expose only configurations expected to work reliably.
-
-The Mac does not request arbitrary unsupported values.
-
-## H.264 encoding
-
-Raw camera frames are not transported through ADB.
-
-Android encodes video with `MediaCodec`.
-
-The initial codec is:
-
-    H.264 / AVC
-
-The encoded stream includes:
-
-- SPS and PPS codec configuration;
-- key frames;
-- regular frames;
-- presentation timestamps;
-- sequence numbers;
-- end-of-stream packets.
-
-The Mac decodes H.264 through VideoToolbox.
-
-## Video packet framing
-
-TCP does not preserve application message boundaries.
-
-Every H.264 payload therefore uses a fixed header followed by a payload.
-
-The receiver must support:
-
-- partial headers;
-- partial payloads;
-- several packets in one socket read;
-- invalid packet lengths;
-- connection closure during a packet;
-- encoder discontinuities;
-- new codec configuration after restart.
+---
 
 ## Recording
 
-The Android phone does not create Webcamera recording files.
+The Android phone does not create the final Webcamera recording file.
 
-Recording is controlled and performed on the Mac.
+Recording occurs on macOS.
 
-The Mac receives the Android video stream and writes the corresponding recording.
+The Mac can combine Android video with:
 
-This keeps recording behavior consistent with local cameras:
+```text
+Phone Microphone
+macOS microphone
+No Audio
+```
 
-- one destination folder;
-- separate source files;
-- unique names;
-- independent recordings;
-- Mac-side error reporting;
-- common recording controls.
+The output format can be:
 
-The initial Android source is video-only.
+```text
+MOV
+MP4
+```
 
-No microphone audio is sent from Android in the first version.
+The output folder and filename behavior match local-camera recordings.
 
-## Multiple Android devices
+---
 
-The architecture may support several connected Android phones.
+## Forwarding inspection
 
-Each phone uses:
+List all forwarding rules:
 
-- its own ADB serial;
-- its own forwarding rules;
-- its own local control port;
-- its own local video port;
-- its own control socket;
-- its own video socket;
-- its own packet parser;
-- its own H.264 decoder;
-- its own preview state;
-- its own Mac-side recording state.
+```bash
+ADB_LIBUSB=0 adb forward --list
+```
 
-The same Android ports can be reused on every phone because ADB maps them to separate local Mac ports.
+Remove only the Webcamera control forwarding:
 
-The Mac must never send a device-specific ADB command without the correct serial.
+```bash
+ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward \
+  --remove \
+  tcp:27283
+```
 
-## Bandwidth
+Remove only the Webcamera media forwarding:
 
-Total load increases with:
+```bash
+ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward \
+  --remove \
+  tcp:27284
+```
 
-- resolution;
-- frame rate;
-- H.264 bitrate;
-- number of connected phones;
-- number of local cameras;
-- simultaneous decoding;
-- simultaneous recording;
-- storage speed.
+Do not use `forward --remove-all` in normal project scripts because it may remove forwarding rules belonging to other applications.
 
-The first Android version should prioritize stable settings over maximum quality.
-
-A practical first target may be:
-
-    1280 × 720
-    30 FPS
-    hardware H.264
-    moderate bitrate
-
-Higher resolutions should be enabled only after successful device testing.
-
-## Backpressure
-
-Video transmission must not block the Android camera or encoder callback thread indefinitely.
-
-The Android side should use:
-
-- a bounded transmission queue;
-- a dedicated socket-writing thread;
-- frame dropping when the client cannot keep up;
-- key-frame recovery after discontinuity.
-
-The macOS side should use:
-
-- bounded receive buffers;
-- packet-size validation;
-- decoder queue isolation;
-- late-frame dropping for preview;
-- explicit decoder restart after codec changes.
+---
 
 ## Connection loss
 
-The transport manager distinguishes between:
+The transport may fail because of:
 
-    ADB device disconnected
-    ADB device offline
-    forwarding missing
-    Android application unavailable
-    control server unavailable
-    video server unavailable
-    control protocol error
-    invalid video packet
-    encoder stopped
-    decoder failed
+- USB disconnection;
+- ADB daemon restart;
+- unauthorized device;
+- offline device;
+- Android process termination;
+- forwarding loss;
+- control socket failure;
+- media socket failure;
+- malformed JSON;
+- invalid packet header;
+- unsupported protocol version;
+- payload size violation;
+- encoder failure;
+- H.264 decoder failure.
 
-A failure in one Android source must not interrupt:
+A failure in the Android transport must not stop local Mac cameras.
 
-- built-in Mac cameras;
-- USB cameras connected to the Mac;
-- another Android source;
-- recordings from unrelated sources.
+---
 
-## Reconnection
+## Reconnection requirements
 
-After a disconnect, the Mac may:
+A full reconnection should:
 
-1. mark the source unavailable;
-2. close control and video sockets;
-3. clear incomplete packet buffers;
-4. reset decoder state;
-5. wait for the same ADB serial;
+1. close control and media sockets;
+2. clear incomplete receive buffers;
+3. reset the H.264 decoder;
+4. mark the source unavailable;
+5. rediscover the same ADB serial;
 6. recreate forwarding;
-7. reconnect to the control server;
+7. restart or reconnect to the Android application;
 8. request capabilities again;
-9. restore the previous valid configuration;
-10. restart streaming when appropriate.
+9. restore a valid camera and format;
+10. receive codec configuration again;
+11. restart streaming if appropriate.
 
-Codec configuration must be received again after every encoder or video connection restart.
+---
 
-## Keepalive
+## Backpressure
 
-The control connection uses `ping` and `pong`.
+Android media writing must not block camera or encoder callbacks indefinitely.
 
-Keepalive helps distinguish:
+Recommended Android behavior:
 
-- an idle but healthy connection;
-- a blocked Android process;
-- a broken USB connection;
-- a stale forwarding rule.
+- dedicated socket writer thread;
+- bounded media queue;
+- controlled frame dropping;
+- key-frame request or restart after discontinuity;
+- explicit socket failure handling.
 
-Video packets do not replace control keepalive.
+Recommended macOS behavior:
 
-## Security
+- bounded receive buffers;
+- maximum payload validation;
+- isolated decoder queue;
+- source-specific error reporting;
+- decoder reset on configuration change.
 
-The Android servers bind only to loopback.
-
-They are reachable from the Mac only through ADB forwarding.
-
-The first protocol does not use encryption or application-level authentication.
-
-This is acceptable for the initial USB and ADB development transport.
-
-The application must not expose the control or video server on:
-
-    0.0.0.0
-
-unless network transport is explicitly designed and secured in a future version.
+---
 
 ## Diagnostics
 
-List connected devices:
+List devices:
 
-    ADB_LIBUSB=0 adb devices -l
+```bash
+ADB_LIBUSB=0 adb devices -l
+```
 
-Check device state:
+Check state:
 
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL get-state
+```bash
+ADB_LIBUSB=0 adb -s DEVICE_SERIAL get-state
+```
 
-Test shell access:
+Test shell:
 
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL shell echo connected
+```bash
+ADB_LIBUSB=0 adb -s DEVICE_SERIAL shell echo connected
+```
 
 List forwarding:
 
-    ADB_LIBUSB=0 adb forward --list
+```bash
+ADB_LIBUSB=0 adb forward --list
+```
 
-Inspect Android logs:
+Read logs:
 
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL logcat -d | grep -i Webcamera
+```bash
+ADB_LIBUSB=0 adb -s DEVICE_SERIAL logcat |
+  grep -i webcamera
+```
 
 Check application process:
 
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL shell ps | grep -i webcamera
+```bash
+ADB_LIBUSB=0 adb -s DEVICE_SERIAL shell ps |
+  grep -i webcamera
+```
 
-Test a control forwarding rule:
+Run the repository test:
 
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward tcp:27283 tcp:27283
+```bash
+./scripts/test-usb-transport.sh DEVICE_SERIAL
+```
 
-Test a video forwarding rule:
+---
 
-    ADB_LIBUSB=0 adb -s DEVICE_SERIAL forward tcp:27284 tcp:27284
+## Security
 
-## Logging
+The Android servers bind to loopback and are reached through an ADB-authorized USB connection.
 
-Useful transport logs include:
+The current protocol does not provide:
 
-- ADB serial;
-- Android device name;
-- local control port;
-- local video port;
-- Android control port;
-- Android video port;
-- forwarding creation;
-- control connection state;
-- video connection state;
-- selected camera;
-- selected resolution;
-- selected frame rate;
-- selected bitrate;
-- codec configuration received;
-- first encoded frame;
-- first decoded frame;
-- frame sequence gaps;
-- dropped frames;
-- reconnect attempts;
-- errors.
+- encryption;
+- authentication;
+- network discovery;
+- public network access.
 
-Logs must not contain raw camera frames.
+A future Wi-Fi transport requires a separate security design.
 
-## iPhone support
+---
 
-ADB transport is Android-specific.
+## iPhone scope
 
-iPhone is not supported by this USB transport.
+ADB is Android-specific.
 
-Supporting iPhone would require a separate iOS application and a different communication system.
+This transport does not support iPhone.
+
+iPhone support would require:
+
+- a separate iOS application;
+- Apple signing;
+- a different wired or network protocol;
+- a separate compatibility and release process.

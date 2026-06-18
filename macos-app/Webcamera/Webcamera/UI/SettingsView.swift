@@ -17,6 +17,12 @@ struct SettingsView: View {
   private var recordingFileFormat =
     RecordingFileFormat.mov.rawValue
 
+  @AppStorage(
+    "defaultAudioDeviceID"
+  )
+  private var defaultAudioDeviceID =
+    AudioDeviceInfo.noAudioID
+
   var body: some View {
     Form {
       Section("Recording") {
@@ -85,6 +91,49 @@ struct SettingsView: View {
       }
 
       Section("Audio") {
+        Picker(
+          "Default Microphone",
+          selection:
+            $defaultAudioDeviceID
+        ) {
+          ForEach(
+            appState.audioDevices
+          ) { audioDevice in
+            Label(
+              audioDevice.name,
+              systemImage:
+                audioDevice.isNoAudio
+                ? "mic.slash"
+                : "mic"
+            )
+            .tag(
+              audioDevice.id
+            )
+          }
+        }
+
+        Button(
+          "Apply Microphone to All Selected Cameras"
+        ) {
+          appState
+            .applyAudioDeviceToAll(
+              audioDeviceID:
+                defaultAudioDeviceID
+            )
+        }
+        .disabled(
+          appState.selectedCameraIDs
+            .isEmpty
+            || appState
+              .isAnyCameraRecording
+        )
+
+        Text(
+          "The selected macOS microphone will be assigned to every selected camera, including Android cameras. Phone Microphone remains an individual Android-camera option."
+        )
+        .font(.caption)
+        .foregroundStyle(.secondary)
+
         Text(
           "Live Monitor plays the selected microphone through the current macOS audio output. Headphones are recommended to prevent feedback."
         )
@@ -92,7 +141,7 @@ struct SettingsView: View {
         .foregroundStyle(.secondary)
 
         Text(
-          "Mono recording creates a one-channel audio track and is useful when an audio interface supplies the microphone only on its left input."
+          "Mono recording creates a one-channel audio track. The phone microphone is already transmitted as mono."
         )
         .font(.caption)
         .foregroundStyle(.secondary)

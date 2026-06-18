@@ -1,5 +1,7 @@
 import AVFoundation
 import AppKit
+import CoreImage
+import CoreVideo
 import SwiftUI
 
 final class CaptureSessionGate: @unchecked Sendable {
@@ -224,5 +226,117 @@ final class CameraPreviewNSView:
     layer?.addSublayer(
       previewLayer
     )
+  }
+}
+
+struct AndroidVideoPreviewView:
+  NSViewRepresentable
+{
+  let pixelBuffer:
+    CVPixelBuffer?
+
+  func makeNSView(
+    context: Context
+  ) -> AndroidPixelBufferNSView {
+    let view =
+      AndroidPixelBufferNSView()
+
+    view.display(
+      pixelBuffer
+    )
+
+    return view
+  }
+
+  func updateNSView(
+    _ nsView:
+      AndroidPixelBufferNSView,
+    context: Context
+  ) {
+    nsView.display(
+      pixelBuffer
+    )
+  }
+}
+
+final class AndroidPixelBufferNSView:
+  NSView
+{
+  private let imageContext =
+    CIContext(
+      options: [
+        .cacheIntermediates:
+          false,
+      ]
+    )
+
+  override init(
+    frame frameRect: NSRect
+  ) {
+    super.init(
+      frame: frameRect
+    )
+
+    configure()
+  }
+
+  required init?(
+    coder: NSCoder
+  ) {
+    super.init(
+      coder: coder
+    )
+
+    configure()
+  }
+
+  func display(
+    _ pixelBuffer:
+      CVPixelBuffer?
+  ) {
+    guard let pixelBuffer else {
+      layer?.contents = nil
+      return
+    }
+
+    let image =
+      CIImage(
+        cvPixelBuffer:
+          pixelBuffer
+      )
+
+    guard
+      let cgImage =
+        imageContext.createCGImage(
+          image,
+          from: image.extent
+        )
+    else {
+      return
+    }
+
+    CATransaction.begin()
+
+    CATransaction.setDisableActions(
+      true
+    )
+
+    layer?.contents =
+      cgImage
+
+    CATransaction.commit()
+  }
+
+  private func configure() {
+    wantsLayer = true
+
+    layer?.backgroundColor =
+      NSColor.black.cgColor
+
+    layer?.contentsGravity =
+      .resizeAspect
+
+    layer?.masksToBounds =
+      true
   }
 }

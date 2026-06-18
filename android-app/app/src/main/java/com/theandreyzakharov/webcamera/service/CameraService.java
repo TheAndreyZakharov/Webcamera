@@ -302,12 +302,15 @@ public final class CameraService extends Service
                 response.put(
                     "available",
                     success
+                        || cameraController.isStreaming()
                 );
 
                 if (!success) {
                     response.put(
                         "message",
-                        "Torch is unavailable for the selected camera."
+                        cameraController.isStreaming()
+                            ? "The active camera rejected torch mode."
+                            : "Start the rear camera before enabling the torch."
                     );
                 }
 
